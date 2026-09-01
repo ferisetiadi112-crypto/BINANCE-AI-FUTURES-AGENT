@@ -105,7 +105,7 @@ function calculateTrend(closes: number[], ema20: number, _ema50: number): TrendD
   return "FLAT";
 }
 
-function calculateTrendStrength(closes: number[], ema20: number, ema50: number, ema200: number): number {
+export function calculateTrendStrength(closes: number[], ema20: number, ema50: number, ema200: number): number {
   if (closes.length < 20) return 50;
   let strength = 50;
   if (ema20 > ema50 && ema50 > ema200) strength += 20;
@@ -129,7 +129,7 @@ function calculateMomentum(rsi: number, macdHistogram: number, macdTrend: string
   return "REVERSAL";
 }
 
-function calculateMomentumScore(rsi: number, macdHistogram: number): number {
+export function calculateMomentumScore(rsi: number, macdHistogram: number): number {
   let score = 50;
   score += (rsi - 50) * 0.3;
   score += Math.min(20, Math.abs(macdHistogram) * 10) * Math.sign(macdHistogram);

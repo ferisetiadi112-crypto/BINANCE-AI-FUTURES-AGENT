@@ -163,10 +163,15 @@ export class PaperTradingEngine {
     if (!this.position || this.position.side === "FLAT") return null;
 
     const side = this.position.side;
-    const exitPrice = currentPrice;
     const quantity = this.position.size;
+    const slippage = currentPrice * this.config.simulatedSlippageRate;
+
+    // Apply slippage to exit price (adverse to trader)
+    const exitPrice = side === "LONG"
+      ? currentPrice - slippage  // LONG exit: sell lower
+      : currentPrice + slippage; // SHORT exit: buy higher
+
     const fee = quantity * exitPrice * this.config.simulatedFeeRate;
-    const slippage = exitPrice * this.config.simulatedSlippageRate;
 
     let pnl: number;
     if (side === "LONG") {
