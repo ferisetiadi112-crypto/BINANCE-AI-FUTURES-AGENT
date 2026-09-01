@@ -56,7 +56,7 @@ export function CandleChart({ data, height = 340 }: { data: Candle[]; height?: n
   const y = (p: number) => padT + ((highs - p) / range) * plotH;
 
   const gridLines = 5;
-  const last = data[data.length - 1];
+  const last = data[data.length - 1] ?? { t: "", o: 0, h: 1, l: 0, c: 0, v: 0 };
 
   return (
     <div className="relative w-full">
