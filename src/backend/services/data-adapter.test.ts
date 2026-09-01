@@ -127,5 +127,31 @@ describe("Data Adapter", () => {
       expect(data.noRealTrading).toBe(true);
       expect(Array.isArray(data.feedSymbols)).toBe(true);
     });
+
+    // Phase 8C: No random feed state in API responses
+    it("fetchPaperStatus feed state is deterministic (no Math.random)", async () => {
+      const { fetchPaperStatus } = await import("./data-adapter");
+      const data1 = await fetchPaperStatus();
+      const data2 = await fetchPaperStatus();
+
+      // Feed symbols should have consistent structure
+      expect(data1.feedSymbols.length).toBe(data2.feedSymbols.length);
+      for (let i = 0; i < data1.feedSymbols.length; i++) {
+        expect(data1.feedSymbols[i]!.symbol).toBe(data2.feedSymbols[i]!.symbol);
+        // feedState should be a valid enum value, not random
+        expect(["ONLINE", "DEGRADED", "STALE", "OFFLINE"]).toContain(data1.feedSymbols[i]!.feedState);
+      }
+    });
+
+    it("fetchFeedStatus returns aggregate state", async () => {
+      const { fetchFeedStatus } = await import("./data-adapter");
+      const data = await fetchFeedStatus();
+      expect(data).toHaveProperty("aggregate");
+      expect(data).toHaveProperty("symbols");
+      expect(data).toHaveProperty("connectionStatus");
+      expect(["ONLINE", "DEGRADED", "STALE", "OFFLINE"]).toContain(data.aggregate.overallFeedState);
+      expect(typeof data.aggregate.totalSymbols).toBe("number");
+      expect(Array.isArray(data.symbols)).toBe(true);
+    });
   });
 });

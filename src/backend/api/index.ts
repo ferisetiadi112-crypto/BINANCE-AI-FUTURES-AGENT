@@ -26,6 +26,7 @@ import {
   fetchCandles,
   fetchHealth,
   fetchPaperStatus,
+  fetchFeedStatus,
   getDataSource,
 } from "../services/data-adapter";
 import type { ApiResponse } from "../../types/api";
@@ -154,6 +155,15 @@ export const getHealth = createServerFn({ method: "GET" }).handler(
 export const getPaperStatus = createServerFn({ method: "GET" }).handler(
   async () => {
     const data = await fetchPaperStatus();
+    return wrap(data);
+  },
+);
+
+// ─── GET /api/feed-status ──────────────────────────────────────────
+
+export const getFeedStatus = createServerFn({ method: "GET" }).handler(
+  async () => {
+    const data = await fetchFeedStatus();
     return wrap(data);
   },
 );

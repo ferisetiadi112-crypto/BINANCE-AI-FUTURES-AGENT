@@ -35,6 +35,7 @@ import { systemConfigRepository } from "../repositories/system-config";
 import { getRecentExperiences, getExperienceStats } from "../ai/experience-engine";
 import { getRecentLessons, getLessonStats } from "../ai/lesson-engine";
 import * as symbolUniverseModule from "../market/symbols";
+import { getFeedManager, type PerSymbolFeedState, type FeedAggregateState } from "../market/symbol-feed-state";
 
 export type DataSource = "mock" | "database" | "live";
 
@@ -468,35 +469,11 @@ export async function fetchPaperStatus(): Promise<PaperStatusResponse> {
         }
       : null;
 
-    const feedSymbols: SymbolFeedStatus[] = (
-      symbolUniverseModule.getEnabledSymbols()
-    ).map((s) => {
-      const now = Date.now();
-      // Determine feed state: age-based heuristic (mock data always fresh)
-      const dataAgeMs = 5000 + Math.random() * 10000;
-      const feedState: SymbolFeedStatus["feedState"] =
-        dataAgeMs < 30000 ? "ONLINE" : dataAgeMs < 60000 ? "DEGRADED" : "STALE";
-
-      return {
-        symbol: s.symbol,
-        feedState,
-        lastUpdate: now - dataAgeMs,
-        dataAgeMs,
-        candleCount: 0,
-        trend: "FLAT",
-        price: 0,
-        change24h: 0,
-      };
-    });
-
-    const feedState: SymbolFeedStatus["feedState"] =
-      feedSymbols.length > 0 && feedSymbols.every((f) => f.feedState === "ONLINE")
-        ? "ONLINE"
-        : feedSymbols.some((f) => f.feedState === "STALE")
-          ? "STALE"
-          : feedSymbols.some((f) => f.feedState === "DEGRADED")
-            ? "DEGRADED"
-            : "OFFLINE";
+    // Phase 8C: Real feed state from WebSocket FeedManager (no Math.random)
+    const feedManager = getFeedManager();
+    const feedSymbols: SymbolFeedStatus[] = feedManager.getFeedStatusesForApi();
+    const feedAggregate = feedManager.computeAggregateState();
+    const feedState: SymbolFeedStatus["feedState"] = feedAggregate.overallFeedState;
 
     return {
       mode: "PAPER",
@@ -544,16 +521,30 @@ export async function fetchPaperStatus(): Promise<PaperStatusResponse> {
 // ─── Multi-Symbol Feed Status (Phase 8B) ─────────────────────────────
 
 export async function fetchMarketFeedStatus(): Promise<SymbolFeedStatus[]> {
-  return symbolUniverseModule.getEnabledSymbols().map((s) => ({
-    symbol: s.symbol,
-    feedState: "ONLINE" as const,
-    lastUpdate: Date.now() - 3000,
-    dataAgeMs: 3000,
-    candleCount: 0,
-    trend: "FLAT",
-    price: 0,
-    change24h: 0,
-  }));
+  // Phase 8C: Real feed state from FeedManager
+  const feedManager = getFeedManager();
+  return feedManager.getFeedStatusesForApi();
+}
+
+// ─── Feed Status (Phase 8C) ────────────────────────────────────────
+
+export type FeedStatusResponse = {
+  aggregate: FeedAggregateState;
+  symbols: SymbolFeedStatus[];
+  connectionStatus: string;
+  startedAt: number;
+  lastCheckAt: number;
+};
+
+export async function fetchFeedStatus(): Promise<FeedStatusResponse> {
+  const feedManager = getFeedManager();
+  return {
+    aggregate: feedManager.computeAggregateState(),
+    symbols: feedManager.getFeedStatusesForApi(),
+    connectionStatus: feedManager.getStreamStatus(),
+    startedAt: 0,
+    lastCheckAt: Date.now(),
+  };
 }
 
 // ─── Candles ──────────────────────────────────────────────────────────

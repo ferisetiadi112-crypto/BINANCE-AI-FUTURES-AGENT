@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { Meter, PageHeader, Panel, Stat, Tag } from "@/components/space/Panel";
 import { CandleChart, EquityChart, SignalRadar } from "@/components/space/Charts";
-import { fetchDashboard, fetchRuntime, fetchLearning, fetchSystem, fetchHealth, fetchPaperStatus } from "@/api/client";
+import { fetchDashboard, fetchRuntime, fetchLearning, fetchSystem, fetchHealth, fetchPaperStatus, fetchFeedStatus } from "@/api/client";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -66,6 +66,11 @@ function Dashboard() {
     queryFn: fetchPaperStatus,
     refetchInterval: 10000, // Poll every 10s for live status
   });
+  const { data: feedResp } = useQuery({
+    queryKey: ["feed-status"],
+    queryFn: fetchFeedStatus,
+    refetchInterval: 5000, // Poll every 5s for live feed state
+  });
 
   const d = dashResp?.data;
   const runtime = runtimeResp?.data;
@@ -91,7 +96,9 @@ function Dashboard() {
   const derivedLessons = learning?.derivedLessons?.slice(0, 3) || [];
   const systemNodes = system?.nodes || [];
   const paper = paperResp?.data;
-  const feedSymbols = paper?.feedSymbols || [];
+  const feedStatusData = feedResp?.data;
+  // Phase 8C: Use real feed state from WebSocket FeedManager
+  const feedSymbols = feedStatusData?.symbols || paper?.feedSymbols || [];
 
   return (
     <div className="mx-auto max-w-[110rem]">
@@ -117,7 +124,7 @@ function Dashboard() {
       {/* ── System Status Bar ───────────────────────────────────────── */}
       <Panel title="System Status" code="OBSERVATORY" glow>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <StatusIndicator label="Market Feed" state={paper?.feedState || "ONLINE"} />
+          <StatusIndicator label="Market Feed" state={feedStatusData?.aggregate?.overallFeedState || paper?.feedState || "OFFLINE"} />
           <StatusIndicator label="Runtime Intel" state="ONLINE" />
           <StatusIndicator label="AI Engine" state="ONLINE" />
           <StatusIndicator label="Risk Engine" state={riskEnv.status === "NOMINAL" ? "ONLINE" : "PAUSED"} />
@@ -412,7 +419,7 @@ function Dashboard() {
       </div>
 
       {/* ── Market Overview ─────────────────────────────────────────── */}
-      <MarketOverview d={d} aiIntel={aiIntel} feedSymbols={feedSymbols} />
+      <MarketOverview d={d} aiIntel={aiIntel} feedSymbols={feedSymbols} feedStatusData={feedStatusData} />
 
       {/* ── Safety Footer ───────────────────────────────────────────── */}
       <div className="mt-3 mb-6">
@@ -486,29 +493,29 @@ function FeedDot({ state }: { state: string }) {
   );
 }
 
-const MARKET_ROWS = [
-  { symbol: "BTCUSDT", priceKey: 1 as const, change24h: 785.20, trend: "UP" },
-  { symbol: "ETHUSDT", priceKey: 0.053 as const, change24h: 28.92, trend: "UP" },
-  { symbol: "SOLUSDT", priceKey: 0.0029 as const, change24h: -0.77, trend: "DOWN" },
-  { symbol: "BNBUSDT", priceKey: 0.0096 as const, change24h: 1.88, trend: "FLAT" },
+// Phase 8C: All 12 symbols from the symbol universe
+const ALL_SYMBOLS = [
+  "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", // T1
+  "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", // T2
+  "AVAXUSDT", "DOTUSDT", "NEARUSDT", "APTUSDT", // T3
 ];
 
-function MarketOverview({ d, aiIntel, feedSymbols }: { d: any; aiIntel: any; feedSymbols: any[] }) {
+function MarketOverview({ d, aiIntel, feedSymbols, feedStatusData }: { d: any; aiIntel: any; feedSymbols: any[]; feedStatusData: any }) {
   return (
     <div className="mt-3">
-      <Panel title="Market Overview" code="BINANCE FUTURES" action={<Tag tone="gain">SIM FEED</Tag>}>
+      <Panel title="Market Overview" code="BINANCE FUTURES" action={<Tag tone={feedStatusData?.aggregate?.overallFeedState === "ONLINE" ? "gain" : "warn"}>{feedStatusData?.aggregate?.overallFeedState || "OFFLINE"}</Tag>}>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[50rem] border-collapse">
             <thead>
               <tr className="border-b border-hairline">
-                {["Symbol", "Price", "24h Δ", "Trend", "Feed Status", "Data Age", "Feed"].map((h) => (
+                {["Symbol", "Price", "24h Δ", "Feed State", "Data Age", "Feed"].map((h) => (
                   <th key={h} className="label-mono px-4 py-2 text-left font-normal text-[0.65rem]">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {MARKET_ROWS.map((m) => (
-                <MarketRow key={m.symbol} m={m} d={d} aiIntel={aiIntel} feedSymbols={feedSymbols} />
+              {ALL_SYMBOLS.map((symbol) => (
+                <MarketRow key={symbol} symbol={symbol} d={d} feedSymbols={feedSymbols} />
               ))}
             </tbody>
           </table>
@@ -518,25 +525,24 @@ function MarketOverview({ d, aiIntel, feedSymbols }: { d: any; aiIntel: any; fee
   );
 }
 
-function MarketRow({ m, d, aiIntel, feedSymbols }: { m: any; d: any; aiIntel: any; feedSymbols: any[] }) {
-  const feed = feedSymbols.find((f: any) => f.symbol === m.symbol);
-  const feedState = (feed?.feedState || "ONLINE") as string;
-  const dataAge = feed?.dataAgeMs || 3000;
-  const ageLabel = dataAge < 60000 ? String(dataAge / 1000 | 0) + "s" : "STALE";
-  const price = m.priceKey === 1 ? d.currentPrice : d.currentPrice * m.priceKey;
+function MarketRow({ symbol, d, feedSymbols }: { symbol: string; d: any; feedSymbols: any[] }) {
+  const feed = feedSymbols.find((f: any) => f.symbol === symbol);
+  const feedState = (feed?.feedState || "OFFLINE") as string;
+  const dataAge = feed?.dataAgeMs;
+  const isInfinity = !Number.isFinite(dataAge);
+  const ageLabel = isInfinity ? "N/A" : dataAge < 60000 ? String(Math.round(dataAge / 1000)) + "s" : "STALE";
+  const price = feed?.price || 0;
+  const change24h = feed?.change24h || 0;
   return (
     <tr className="border-b border-hairline/60 transition-colors last:border-0 hover:bg-primary/5">
-      <td className="px-4 py-2.5 font-mono text-xs font-semibold text-foreground">{m.symbol}</td>
-      <td className="px-4 py-2.5 font-mono text-xs tabular-nums text-foreground">{'$' + price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-      <td className={'px-4 py-2.5 font-mono text-xs tabular-nums ' + (m.change24h >= 0 ? 'text-gain' : 'text-loss')}>{m.change24h >= 0 ? '+' : ''}{m.change24h.toFixed(2)}</td>
-      <td className="px-4 py-2.5">
-        <Tag tone={m.trend === "UP" ? "gain" : m.trend === "DOWN" ? "loss" : "default"}>{m.trend}</Tag>
-      </td>
-      <td className="px-4 py-2.5">
+      <td className="px-4 py-2 font-mono text-xs font-semibold text-foreground">{symbol}</td>
+      <td className="px-4 py-2 font-mono text-xs tabular-nums text-foreground">{price > 0 ? '$' + price.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}</td>
+      <td className={'px-4 py-2 font-mono text-xs tabular-nums ' + (change24h >= 0 ? 'text-gain' : 'text-loss')}>{change24h >= 0 ? '+' : ''}{change24h.toFixed(2)}</td>
+      <td className="px-4 py-2">
         <Tag tone={feedState === "ONLINE" ? "gain" : feedState === "DEGRADED" ? "warn" : "loss"}>{feedState}</Tag>
       </td>
-      <td className="px-4 py-2.5 font-mono text-[0.65rem] tabular-nums text-muted-foreground">{ageLabel}</td>
-      <td className="px-4 py-2.5">
+      <td className="px-4 py-2 font-mono text-[0.65rem] tabular-nums text-muted-foreground">{ageLabel}</td>
+      <td className="px-4 py-2">
         <FeedDot state={feedState} />
       </td>
     </tr>

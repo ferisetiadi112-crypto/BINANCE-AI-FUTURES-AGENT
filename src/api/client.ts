@@ -22,6 +22,7 @@ import {
   getSystem,
   getHealth,
   getPaperStatus,
+  getFeedStatus,
 } from "../backend/api";
 import type { ApiResponse } from "../types/api";
 
@@ -113,5 +114,12 @@ export async function fetchHealth() {
 
 export async function fetchPaperStatus() {
   const result = await getPaperStatus();
+  return result as ApiResponse<any>;
+}
+
+// ─── Feed Status (Phase 8C) ─────────────────────────────────────────
+
+export async function fetchFeedStatus() {
+  const result = await getFeedStatus();
   return result as ApiResponse<any>;
 }
