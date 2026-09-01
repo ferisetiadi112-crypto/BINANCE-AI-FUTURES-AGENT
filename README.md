@@ -1,165 +1,209 @@
-# Emerald Core Terminal
+# BINANCE AI FUTURES AGENT v0.1
 
-Create a modern responsive Binance AI Futures Trading Dashboard UI.
+> **Orbital AI** — A retro-futuristic AI trading command center for Binance Futures.
 
-THEME
+An autonomous AI trading agent built for long-term testing before real-money deployment.
 
-Use a distinctive Retro-Futuristic Space + Emerald Green AI theme.
+**⚠️ Phase 5 — AI Learning, Experience & Controlled Optimization Complete. No real trading. No order execution.**
 
-Visual style:
+---
 
-Deep space black background
+## Architecture
 
-Emerald/terminal green as the main accent
+```
+Frontend (Lovable Dashboard)
+  ├── TanStack Start + React 19
+  ├── TanStack Router (file-based)
+  └── Tailwind CSS + shadcn/ui
+        │
+        ▼
+API Layer (Server Functions)
+  └── src/backend/api/index.ts
+        │
+        ▼
+Application Services
+  ├── src/backend/services/data-adapter.ts
+  ├── src/backend/trading/orchestrator.ts
+  ├── src/backend/ai/decision-engine.ts
+  ├── src/backend/risk/engine.ts
+  └── src/backend/paper/engine.ts
+        │
+        ▼
+Domain Logic
+  ├── src/backend/ai/strategies.ts (5 strategy modules)
+  ├── src/backend/runtime/engine.ts (Runtime Intelligence)
+  ├── src/backend/runtime/indicators.ts (EMA, RSI, MACD, ATR, VWAP)
+  ├── src/backend/runtime/regime.ts (Market regime classifier)
+  └── src/backend/market/validation.ts (Data quality)
+        │
+        ▼
+Infrastructure
+  ├── src/backend/repositories/ (9 data access modules)
+  ├── src/backend/database/ (SQLite + schema versioning)
+  ├── src/backend/exchange/binance-market.ts (REST - READ-ONLY)
+  ├── src/backend/exchange/binance-stream.ts (WebSocket - READ-ONLY)
+  └── src/backend/logger.ts (Structured logging)
+```
 
-Subtle neon green glow
+### Trading Pipeline (Phase 4)
 
-Retro computer terminal aesthetic
-
-Futuristic spacecraft control-center feeling
-
-Subtle stars, grid and technical lines
-
-Dark glass/metal panels
-
-Clean modern typography
-
-Professional, not gaming-style
-
-Minimal but visually impressive
-
-MAIN UI
-
-Create a dashboard with:
-
-1. Overview
-
-Balance
-
-Daily PnL
-
-Total PnL
-
-Win Rate
-
-Profit Factor
-
-Drawdown
-
-Trading status
-
-2. AI Intelligence
-
-AI Confidence
-
-Current Market Regime
-
-AI Decision
-
-Selected Strategy
-
-Market Analysis
-
-Technical Analysis
-
-3. Trading
-
-Candlestick chart
-
-Current position
-
-Entry / Exit
-
-PnL
-
-Recent trades
-
-4. AI Learning
-
-AI Experiences
-
-Lessons Learned
-
-Strategy Performance
-
-AI Improvement
-
-Learning Timeline
-
-5. AI Audit
-
-Long-term performance
-
-AI evolution
-
-Strategy evolution
-
-Win rate
-
-Profit factor
-
-Drawdown
-
-Decision quality
-
-6. Risk Center
-
-Daily profit limit
-
-Daily loss limit
-
-Exposure
-
-Leverage
-
-Risk status
-
-Emergency stop status
-
-NAVIGATION
-
-Sidebar:
-
+```
+Binance Market Data (REST + WebSocket)
+  ↓
+Market Data Validation
+  ↓
+Runtime Intelligence Engine
+  ↓ MarketState
+Strategy Evaluation (5 modules)
+  ↓ Candidate Signals
+AI Decision Engine
+  ↓ AiDecision
+Risk Engine (HIGHEST AUTHORITY)
+  ↓ RiskCheckResult
+Paper Trading Engine
+  ↓ PaperTrade
+Database
+  ↓
 Dashboard
-AI Intelligence
-Market Analysis
-Trading
-Strategies
-Trades
-Learning
-AI Audit
-Risk Center
-System
+```
 
-IMPORTANT
+---
 
-Focus primarily on visual design and UI/UX.
+## Key Principles
 
-Do not build Binance integration or real trading functionality.
+- **Risk Engine is supreme** — AI decisions are always subordinate to risk controls
+- **NO_TRADE is a valid decision** — the AI can choose not to trade
+- **Paper trading only** — all trades are simulated until 12-month validation complete
+- **Small capital target** — $5 initial, ±$0.50 daily boundary
+- **Self-improvement is controlled** — no automatic strategy/model changes
+- **12-month testing** — extensive validation before real money
 
-Make the interface feel like:
+---
 
-"A Retro-Futuristic AI Trading Command Center in Deep Space."
+## Tech Stack
 
-Use emerald green as the signature color throughout the interface.
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 19, TanStack Start, TanStack Router |
+| Styling | Tailwind CSS 4.2, shadcn/ui (46 components) |
+| Charting | Recharts + custom SVG candlestick |
+| Backend | TypeScript server functions (TanStack Start) |
+| Database | SQLite via better-sqlite3 |
+| Testing | Vitest |
+| Bundler | Vite 8.1.5 |
+| Package Manager | Bun |
 
-This project was built with [Lovable](https://lovable.dev).
+---
 
-## Build with Lovable
+## Getting Started
 
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/9e73d3d0-2fb2-4097-a88f-d682ff47c378).
+```bash
+# Install dependencies
+bun install
 
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+# Seed development database
+bun run seed
+
+# Run tests
+bun run test
+
+# Type check
+bun tsc -b --noEmit
+
+# Build
+bun run build
+
+# Start dev server (Freebuff manages this)
+bun run dev
+```
+
+---
+
+## API Endpoints
+
+| Endpoint | Description | Data Source |
+|----------|-------------|-------------|
+| `GET /api/dashboard` | Account, equity, recent trades | Database |
+| `GET /api/runtime` | System status, last decision | Runtime Engine |
+| `GET /api/market` | Symbol data, candles | Binance / Mock |
+| `GET /api/performance` | Equity curve, audit summary | Database |
+| `GET /api/strategies` | Strategy portfolio | Database |
+| `GET /api/trades` | Trade history | Database |
+| `GET /api/learning` | AI experiences, lessons | Database |
+| `GET /api/experiments` | AI experiments, models | Database |
+| `GET /api/risk` | Risk status, events | Risk Engine |
+| `GET /api/audit` | AI evolution, confidence | Database |
+| `GET /api/system` | System config, events | Database |
+| `GET /api/health` | System health check | All systems |
+
+---
+
+## Database
+
+SQLite with schema versioning. 15 tables:
+
+- `accounts` — Trading accounts
+- `positions` — Open/closed positions
+- `orders` — Order history
+- `trades` — Completed trades
+- `strategies` — Strategy definitions
+- `strategy_metrics` — Daily strategy performance
+- `market_data` — Historical candles
+- `ai_decisions` — AI decision log
+- `ai_experiences` — Pattern observations
+- `ai_lessons` — Derived rules
+- `ai_models` — Model versions
+- `ai_experiments` — A/B experiments
+- `risk_events` — Risk system events
+- `system_config` — Configuration
+- `system_events` — System events
+
+---
+
+## Dashboard Routes
+
+| Route | Page | Status |
+|-------|------|--------|
+| `/` | Dashboard | ✅ |
+| `/ai-intelligence` | AI Intelligence | ✅ |
+| `/market-analysis` | Market Analysis | ✅ |
+| `/trading` | Trading | ✅ |
+| `/strategies` | Strategies | ✅ |
+| `/trades` | Trades | ✅ |
+| `/learning` | AI Learning | ✅ |
+| `/ai-audit` | AI Audit | ✅ |
+| `/risk-center` | Risk Center | ✅ |
+| `/system` | System | ✅ |
+
+All 10 routes use the API client (`@/api/client`) — no direct mock imports.
+
+---
 
 ## Development
 
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+```bash
+# Run all tests
+bun run test
 
-```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
-npm run dev
+# Seed database
+bun run seed
+
+# Reset and re-seed
+bun run seed:reset
 ```
+
+---
+
+## Safety
+
+- **NO** Binance API credentials in repository
+- **NO** real order execution
+- **NO** production trading permission
+- **NO** withdrawal capability
+- **ALL** trades clearly marked as PAPER / SIMULATION
+- **Risk Engine** has absolute authority over AI decisions
+- **Daily limits** enforced automatically
+
+---
+
+*Phase 4 Complete. AI Decision Engine + Risk Engine + Paper Trading verified with 126 tests.*

@@ -10,12 +10,24 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AiAuditRouteImport } from './routes/ai-audit'
 import { Route as AiIntelligenceRouteImport } from './routes/ai-intelligence'
+import { Route as LearningRouteImport } from './routes/learning'
 import { Route as MarketAnalysisRouteImport } from './routes/market-analysis'
+import { Route as RiskCenterRouteImport } from './routes/risk-center'
+import { Route as StrategiesRouteImport } from './routes/strategies'
+import { Route as SystemRouteImport } from './routes/system'
+import { Route as TradesRouteImport } from './routes/trades'
+import { Route as TradingRouteImport } from './routes/trading'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AiAuditRoute = AiAuditRouteImport.update({
+  id: '/ai-audit',
+  path: '/ai-audit',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AiIntelligenceRoute = AiIntelligenceRouteImport.update({
@@ -23,40 +35,129 @@ const AiIntelligenceRoute = AiIntelligenceRouteImport.update({
   path: '/ai-intelligence',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LearningRoute = LearningRouteImport.update({
+  id: '/learning',
+  path: '/learning',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MarketAnalysisRoute = MarketAnalysisRouteImport.update({
   id: '/market-analysis',
   path: '/market-analysis',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RiskCenterRoute = RiskCenterRouteImport.update({
+  id: '/risk-center',
+  path: '/risk-center',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StrategiesRoute = StrategiesRouteImport.update({
+  id: '/strategies',
+  path: '/strategies',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SystemRoute = SystemRouteImport.update({
+  id: '/system',
+  path: '/system',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TradesRoute = TradesRouteImport.update({
+  id: '/trades',
+  path: '/trades',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TradingRoute = TradingRouteImport.update({
+  id: '/trading',
+  path: '/trading',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/ai-audit': typeof AiAuditRoute
   '/ai-intelligence': typeof AiIntelligenceRoute
+  '/learning': typeof LearningRoute
   '/market-analysis': typeof MarketAnalysisRoute
+  '/risk-center': typeof RiskCenterRoute
+  '/strategies': typeof StrategiesRoute
+  '/system': typeof SystemRoute
+  '/trades': typeof TradesRoute
+  '/trading': typeof TradingRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/ai-audit': typeof AiAuditRoute
   '/ai-intelligence': typeof AiIntelligenceRoute
+  '/learning': typeof LearningRoute
   '/market-analysis': typeof MarketAnalysisRoute
+  '/risk-center': typeof RiskCenterRoute
+  '/strategies': typeof StrategiesRoute
+  '/system': typeof SystemRoute
+  '/trades': typeof TradesRoute
+  '/trading': typeof TradingRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/ai-audit': typeof AiAuditRoute
   '/ai-intelligence': typeof AiIntelligenceRoute
+  '/learning': typeof LearningRoute
   '/market-analysis': typeof MarketAnalysisRoute
+  '/risk-center': typeof RiskCenterRoute
+  '/strategies': typeof StrategiesRoute
+  '/system': typeof SystemRoute
+  '/trades': typeof TradesRoute
+  '/trading': typeof TradingRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/ai-intelligence' | '/market-analysis'
+  fullPaths:
+    | '/'
+    | '/ai-audit'
+    | '/ai-intelligence'
+    | '/learning'
+    | '/market-analysis'
+    | '/risk-center'
+    | '/strategies'
+    | '/system'
+    | '/trades'
+    | '/trading'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/ai-intelligence' | '/market-analysis'
-  id: '__root__' | '/' | '/ai-intelligence' | '/market-analysis'
+  to:
+    | '/'
+    | '/ai-audit'
+    | '/ai-intelligence'
+    | '/learning'
+    | '/market-analysis'
+    | '/risk-center'
+    | '/strategies'
+    | '/system'
+    | '/trades'
+    | '/trading'
+  id:
+    | '__root__'
+    | '/'
+    | '/ai-audit'
+    | '/ai-intelligence'
+    | '/learning'
+    | '/market-analysis'
+    | '/risk-center'
+    | '/strategies'
+    | '/system'
+    | '/trades'
+    | '/trading'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AiAuditRoute: typeof AiAuditRoute
   AiIntelligenceRoute: typeof AiIntelligenceRoute
+  LearningRoute: typeof LearningRoute
   MarketAnalysisRoute: typeof MarketAnalysisRoute
+  RiskCenterRoute: typeof RiskCenterRoute
+  StrategiesRoute: typeof StrategiesRoute
+  SystemRoute: typeof SystemRoute
+  TradesRoute: typeof TradesRoute
+  TradingRoute: typeof TradingRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -68,11 +169,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ai-audit': {
+      id: '/ai-audit'
+      path: '/ai-audit'
+      fullPath: '/ai-audit'
+      preLoaderRoute: typeof AiAuditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/ai-intelligence': {
       id: '/ai-intelligence'
       path: '/ai-intelligence'
       fullPath: '/ai-intelligence'
       preLoaderRoute: typeof AiIntelligenceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/learning': {
+      id: '/learning'
+      path: '/learning'
+      fullPath: '/learning'
+      preLoaderRoute: typeof LearningRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/market-analysis': {
@@ -82,13 +197,55 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MarketAnalysisRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/risk-center': {
+      id: '/risk-center'
+      path: '/risk-center'
+      fullPath: '/risk-center'
+      preLoaderRoute: typeof RiskCenterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/strategies': {
+      id: '/strategies'
+      path: '/strategies'
+      fullPath: '/strategies'
+      preLoaderRoute: typeof StrategiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/system': {
+      id: '/system'
+      path: '/system'
+      fullPath: '/system'
+      preLoaderRoute: typeof SystemRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/trades': {
+      id: '/trades'
+      path: '/trades'
+      fullPath: '/trades'
+      preLoaderRoute: typeof TradesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/trading': {
+      id: '/trading'
+      path: '/trading'
+      fullPath: '/trading'
+      preLoaderRoute: typeof TradingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AiAuditRoute: AiAuditRoute,
   AiIntelligenceRoute: AiIntelligenceRoute,
+  LearningRoute: LearningRoute,
   MarketAnalysisRoute: MarketAnalysisRoute,
+  RiskCenterRoute: RiskCenterRoute,
+  StrategiesRoute: StrategiesRoute,
+  SystemRoute: SystemRoute,
+  TradesRoute: TradesRoute,
+  TradingRoute: TradingRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
