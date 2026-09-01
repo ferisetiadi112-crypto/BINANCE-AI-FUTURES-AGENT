@@ -4,7 +4,7 @@
 
 An autonomous AI trading agent built for long-term testing before real-money deployment.
 
-**⚠️ Phase 5 — AI Learning, Experience & Controlled Optimization Complete. No real trading. No order execution.**
+**⚠️ Phase 6 — Confidence Calibration + Strategy Optimization Complete. No real trading. No order execution.**
 
 ---
 
