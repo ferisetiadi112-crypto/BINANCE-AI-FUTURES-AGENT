@@ -36,6 +36,34 @@ const STALE_CHECK_INTERVAL_MS = 15_000; // every 15 seconds
 
 // ─── Types ────────────────────────────────────────────────────────────
 
+/** Kline data point for indicator calculation */
+export type KlineDataPoint = {
+  openTime: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  closeTime: number;
+  isFinal: boolean;
+};
+
+/** Market snapshot for a single symbol */
+export type MarketSnapshot = {
+  symbol: string;
+  price: number;
+  priceChange24h: number;
+  priceChangePercent24h: number;
+  volume24h: number;
+  klines: KlineDataPoint[];
+  feedState: FeedState;
+  dataAgeMs: number;
+  lastEventTimestamp: number;
+};
+
+/** Maximum klines to keep per symbol in memory */
+const MAX_KLINE_BUFFER = 100;
+
 export type PerSymbolFeedState = {
   symbol: string;
   feedState: FeedState;
@@ -44,6 +72,7 @@ export type PerSymbolFeedState = {
   lastPrice: number;
   lastKlineTimestamp: number;
   connectionActive: boolean;
+  recentKlines: KlineDataPoint[]; // buffered klines for indicator calculation
 };
 
 export type FeedAggregateState = {
@@ -116,6 +145,7 @@ export class FeedManager {
         lastPrice: 0,
         lastKlineTimestamp: 0,
         connectionActive: false,
+        recentKlines: [],
       });
     }
 
@@ -185,6 +215,7 @@ export class FeedManager {
         connectionActive: false,
         lastEventTimestamp: 0,
         dataAgeMs: Infinity,
+        recentKlines: [],
       });
     }
 
@@ -212,6 +243,32 @@ export class FeedManager {
     if (!prev) return; // Unknown symbol — ignore
 
     const now = Date.now();
+
+    // Store kline in buffer for indicator calculation
+    const klineData: KlineDataPoint = {
+      openTime: kline.t || timestamp,
+      open: parseFloat(kline.o),
+      high: parseFloat(kline.h),
+      low: parseFloat(kline.l),
+      close: price,
+      volume: parseFloat(kline.v),
+      closeTime: kline.T || timestamp + 60000,
+      isFinal: !!kline.x,
+    };
+
+    // Update or append kline (replace if same openTime, otherwise append)
+    const klines = [...prev.recentKlines];
+    const existingIdx = klines.findIndex((k) => k.openTime === klineData.openTime);
+    if (existingIdx >= 0) {
+      klines[existingIdx] = klineData;
+    } else {
+      klines.push(klineData);
+    }
+    // Cap buffer size
+    while (klines.length > MAX_KLINE_BUFFER) {
+      klines.shift();
+    }
+
     const newState: PerSymbolFeedState = {
       ...prev,
       lastEventTimestamp: timestamp,
@@ -220,6 +277,7 @@ export class FeedManager {
       lastKlineTimestamp: klineTimestamp,
       connectionActive: true,
       feedState: "ONLINE", // Any valid event → ONLINE
+      recentKlines: klines,
     };
 
     this.symbolStates.set(symbol, newState);
@@ -373,6 +431,33 @@ export class FeedManager {
     return this.symbolStates.get(symbol);
   }
 
+  /** Get buffered klines for a specific symbol */
+  getKlinesForSymbol(symbol: string): KlineDataPoint[] {
+    return this.symbolStates.get(symbol)?.recentKlines || [];
+  }
+
+  /**
+   * Get market snapshot for a symbol.
+   * Returns snapshot with current price, klines, and feed state.
+   * Returns null if symbol has no data.
+   */
+  getMarketSnapshot(symbol: string): MarketSnapshot | null {
+    const state = this.symbolStates.get(symbol);
+    if (!state) return null;
+
+    return {
+      symbol: state.symbol,
+      price: state.lastPrice,
+      priceChange24h: 0, // Not available from kline stream alone
+      priceChangePercent24h: 0, // Not available from kline stream alone
+      volume24h: 0, // Accumulated from klines if needed
+      klines: state.recentKlines,
+      feedState: state.feedState,
+      dataAgeMs: state.dataAgeMs,
+      lastEventTimestamp: state.lastEventTimestamp,
+    };
+  }
+
   /** Get feed states for all tracked symbols */
   getAllSymbolFeedStates(): PerSymbolFeedState[] {
     return Array.from(this.symbolStates.values());
@@ -436,7 +521,7 @@ export class FeedManager {
       feedState: s.feedState,
       lastUpdate: s.lastEventTimestamp,
       dataAgeMs: s.dataAgeMs === Infinity ? Infinity : s.dataAgeMs,
-      candleCount: 0, // Could be enriched from storage if needed
+      candleCount: s.recentKlines.length,
       trend: s.lastPrice > 0 ? "LIVE" : "N/A",
       price: s.lastPrice,
       change24h: 0,

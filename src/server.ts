@@ -2,10 +2,14 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import { startTradingRuntime } from "./backend/trading/runtime";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
 };
+
+// Activate trading runtime on server boot (singleton — safe to call once)
+let runtimeStarted = false;
 
 let serverEntryPromise: Promise<ServerEntry> | undefined;
 
@@ -47,6 +51,12 @@ function isH3SwallowedErrorBody(body: string): boolean {
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
+      // Start trading runtime on first request (singleton, idempotent)
+      if (!runtimeStarted) {
+        runtimeStarted = true;
+        startTradingRuntime();
+      }
+
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return await normalizeCatastrophicSsrResponse(response);

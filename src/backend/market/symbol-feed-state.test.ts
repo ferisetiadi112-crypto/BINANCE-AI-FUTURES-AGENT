@@ -105,6 +105,7 @@ function initTestSymbols(manager: FeedManager, symbols: string[]) {
       lastPrice: 0,
       lastKlineTimestamp: 0,
       connectionActive: false,
+      recentKlines: [],
     });
   }
 }
@@ -593,5 +594,169 @@ describe("FeedManager Lifecycle (F-1/F-2/F-3)", () => {
     expect(mgr2).not.toBe(mgr1);
     expect(mgr2.isStarted()).toBe(true);
     expect(mgr2.getSymbolCount()).toBeGreaterThanOrEqual(12);
+  });
+});
+
+// ─── Phase 8D: Market Snapshot Tests ───────────────────────────────
+
+describe("FeedManager Market Snapshot (Phase 8D)", () => {
+  let manager: FeedManager;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    manager = new FeedManager();
+    initTestSymbols(manager, ["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
+  });
+
+  afterEach(() => {
+    manager.stop();
+    resetFeedManager();
+    vi.useRealTimers();
+  });
+
+  // 1. Valid WebSocket event produces market snapshot
+  it("valid kline event produces a market snapshot", () => {
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65000, Date.now()));
+    const snapshot = manager.getMarketSnapshot("BTCUSDT");
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.symbol).toBe("BTCUSDT");
+    expect(snapshot!.price).toBe(65000);
+    expect(snapshot!.feedState).toBe("ONLINE");
+  });
+
+  // 2. Snapshot contains actual timestamp
+  it("snapshot timestamp comes from actual event", () => {
+    const ts = 1700000000000;
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65000, ts));
+    const snapshot = manager.getMarketSnapshot("BTCUSDT");
+    expect(snapshot!.lastEventTimestamp).toBe(ts);
+  });
+
+  // 3. Price comes from actual event
+  it("snapshot price comes from actual event", () => {
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65432, Date.now()));
+    const snapshot = manager.getMarketSnapshot("BTCUSDT");
+    expect(snapshot!.price).toBe(65432);
+  });
+
+  // 4. Malformed event rejected
+  it("malformed event does not produce snapshot", () => {
+    manager.handleKlineEvent({ s: "BTCUSDT", k: null });
+    const snapshot = manager.getMarketSnapshot("BTCUSDT");
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.price).toBe(0); // No event processed
+  });
+
+  // 5. Future event rejected
+  it("future event does not update snapshot", () => {
+    const futureTime = Date.now() + 10000;
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65000, futureTime));
+    const snapshot = manager.getMarketSnapshot("BTCUSDT");
+    expect(snapshot!.price).toBe(0); // Not updated
+  });
+
+  // 6. Out-of-order event rejected
+  it("out-of-order event does not update snapshot", () => {
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65000, 1000));
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65100, 500)); // Earlier
+    const snapshot = manager.getMarketSnapshot("BTCUSDT");
+    expect(snapshot!.price).toBe(65000); // First event preserved
+  });
+
+  // 7. Stale symbol snapshot shows STALE state
+  it("stale symbol shows STALE feed state in snapshot", () => {
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65000, Date.now()));
+    setStreamConnected(manager, true);
+    vi.advanceTimersByTime(FEED_STALE_THRESHOLD_MS + 1000);
+    manager.checkStaleness();
+    const snapshot = manager.getMarketSnapshot("BTCUSDT");
+    expect(snapshot!.feedState).toBe("STALE");
+  });
+
+  // 8. Offline symbol snapshot shows OFFLINE state
+  it("offline symbol shows OFFLINE feed state in snapshot", () => {
+    const snapshot = manager.getMarketSnapshot("BTCUSDT");
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.feedState).toBe("OFFLINE");
+    expect(snapshot!.price).toBe(0);
+  });
+
+  // 9. 12 symbols are independent
+  it("12 symbols have independent snapshots", () => {
+    const symbols = [
+      "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
+      "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT",
+      "AVAXUSDT", "DOTUSDT", "NEARUSDT", "APTUSDT",
+    ];
+    initTestSymbols(manager, symbols);
+
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65000, Date.now()));
+    manager.handleKlineEvent(makeKlineEvent("ETHUSDT", 3500, Date.now()));
+
+    expect(manager.getMarketSnapshot("BTCUSDT")!.price).toBe(65000);
+    expect(manager.getMarketSnapshot("ETHUSDT")!.price).toBe(3500);
+    expect(manager.getMarketSnapshot("SOLUSDT")!.price).toBe(0); // No event
+  });
+
+  // 10. One symbol failure doesn't affect others
+  it("one symbol failure does not affect other snapshots", () => {
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65000, Date.now()));
+    manager.handleKlineEvent(makeKlineEvent("ETHUSDT", 3500, Date.now()));
+
+    setStreamConnected(manager, true);
+    vi.advanceTimersByTime(FEED_STALE_THRESHOLD_MS + 1000);
+    manager.checkStaleness();
+
+    // Both should be STALE
+    expect(manager.getMarketSnapshot("BTCUSDT")!.feedState).toBe("STALE");
+    expect(manager.getMarketSnapshot("ETHUSDT")!.feedState).toBe("STALE");
+
+    // Fresh event to ETHUSDT only
+    manager.handleKlineEvent(makeKlineEvent("ETHUSDT", 3510, Date.now()));
+    expect(manager.getMarketSnapshot("ETHUSDT")!.feedState).toBe("ONLINE");
+    expect(manager.getMarketSnapshot("BTCUSDT")!.feedState).toBe("STALE");
+  });
+
+  // 11. Klines stored in snapshot
+  it("snapshot contains buffered klines", () => {
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65000, 1000));
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65100, 2000));
+    const klines = manager.getKlinesForSymbol("BTCUSDT");
+    expect(klines.length).toBe(2);
+    expect(klines[0]!.close).toBe(65000);
+    expect(klines[1]!.close).toBe(65100);
+  });
+
+  // 12. Kline buffer capped
+  it("kline buffer is capped at MAX_KLINE_BUFFER", () => {
+    for (let i = 0; i < 120; i++) {
+      manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65000 + i, i));
+    }
+    const klines = manager.getKlinesForSymbol("BTCUSDT");
+    expect(klines.length).toBeLessThanOrEqual(100);
+  });
+
+  // 13. Repeated events update snapshot deterministically
+  it("repeated events update snapshot deterministically", () => {
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65000, Date.now()));
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65100, Date.now()));
+    const snapshot = manager.getMarketSnapshot("BTCUSDT");
+    expect(snapshot!.price).toBe(65100);
+  });
+
+  // 14. No Math.random() in snapshot
+  it("snapshot contains no random values", () => {
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65000, 1000));
+    const s1 = manager.getMarketSnapshot("BTCUSDT");
+    const s2 = manager.getMarketSnapshot("BTCUSDT");
+    expect(s1!.price).toBe(s2!.price);
+    expect(s1!.dataAgeMs).toBe(s2!.dataAgeMs);
+  });
+
+  // 15. Existing Phase 8C lifecycle tests still pass
+  it("Phase 8C lifecycle: OFFLINE → ONLINE still works", () => {
+    expect(manager.getSymbolFeedState("BTCUSDT")!.feedState).toBe("OFFLINE");
+    manager.handleKlineEvent(makeKlineEvent("BTCUSDT", 65000, Date.now()));
+    expect(manager.getSymbolFeedState("BTCUSDT")!.feedState).toBe("ONLINE");
   });
 });

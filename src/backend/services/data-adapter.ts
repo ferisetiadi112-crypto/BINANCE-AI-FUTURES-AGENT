@@ -35,7 +35,8 @@ import { systemConfigRepository } from "../repositories/system-config";
 import { getRecentExperiences, getExperienceStats } from "../ai/experience-engine";
 import { getRecentLessons, getLessonStats } from "../ai/lesson-engine";
 import * as symbolUniverseModule from "../market/symbols";
-import { getFeedManager, type PerSymbolFeedState, type FeedAggregateState } from "../market/symbol-feed-state";
+import { getFeedManager, type PerSymbolFeedState, type FeedAggregateState, type MarketSnapshot } from "../market/symbol-feed-state";
+import { generateMarketState, updateSnapshot as updateRuntimeSnapshot, getMarketState } from "../runtime/engine";
 
 export type DataSource = "mock" | "database" | "live";
 
@@ -546,6 +547,80 @@ export async function fetchFeedStatus(): Promise<FeedStatusResponse> {
     lastCheckAt: Date.now(),
   };
 }
+
+// ─── Real-Time Market Snapshot (Phase 8D) ──────────────────────────
+
+/**
+ * Generate a real-time MarketState from FeedManager data.
+ * Uses actual WebSocket kline data — no Math.random().
+ */
+export function generateRealtimeMarketState(symbol: string): ReturnType<typeof generateMarketState> | null {
+  const feedManager = getFeedManager();
+  const snapshot = feedManager.getMarketSnapshot(symbol);
+  if (!snapshot || snapshot.price <= 0) return null;
+  if (snapshot.feedState === "OFFLINE" || snapshot.feedState === "STALE") {
+    // Offline/stale data should not drive decisions
+    return null;
+  }
+  if (snapshot.klines.length < 2) {
+    // Not enough klines for indicator calculation — use snapshot with minimal data
+    return null;
+  }
+
+  return generateMarketState({
+    symbol: snapshot.symbol,
+    price: snapshot.price,
+    priceChange24h: snapshot.priceChange24h,
+    priceChangePercent24h: snapshot.priceChangePercent24h,
+    volume24h: snapshot.volume24h,
+    klines: snapshot.klines.map((k) => ({
+      open: k.open,
+      high: k.high,
+      low: k.low,
+      close: k.close,
+      volume: k.volume,
+    })),
+  });
+}
+
+/**
+ * Update the Runtime Intelligence engine with real-time market data.
+ * Returns true if update was successful, false if data insufficient.
+ */
+export function updateRuntimeWithRealtimeData(symbol: string): boolean {
+  const marketState = generateRealtimeMarketState(symbol);
+  if (!marketState) return false;
+
+  updateRuntimeSnapshot({
+    marketState,
+    indicators: {
+      symbol: marketState.symbol,
+      timestamp: marketState.timestamp,
+      ema20: 0,
+      ema50: 0,
+      ema200: 0,
+      emaCross: "NEUTRAL",
+      rsi: 50,
+      rsiState: "NEUTRAL",
+      macd: 0,
+      macdSignal: 0,
+      macdHistogram: 0,
+      macdTrend: "NEUTRAL",
+      atr: marketState.volatility,
+      atrPercent: marketState.volatilityPercent,
+      vwap: marketState.price,
+      volumeProfile: "AT_VWAP",
+      bollingerUpper: marketState.price * 1.02,
+      bollingerLower: marketState.price * 0.98,
+      bollingerPercent: 0.5,
+    },
+    timestamp: marketState.timestamp,
+    processingTimeMs: 0,
+  });
+  return true;
+}
+
+export type { MarketSnapshot };
 
 // ─── Candles ──────────────────────────────────────────────────────────
 

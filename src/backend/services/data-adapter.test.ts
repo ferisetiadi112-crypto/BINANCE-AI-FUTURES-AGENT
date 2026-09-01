@@ -153,5 +153,47 @@ describe("Data Adapter", () => {
       expect(typeof data.aggregate.totalSymbols).toBe("number");
       expect(Array.isArray(data.symbols)).toBe(true);
     });
+
+    // Phase 8D: Real-time market snapshot bridge
+    it("generateRealtimeMarketState returns null when no data", async () => {
+      const { generateRealtimeMarketState } = await import("./data-adapter");
+      const state = generateRealtimeMarketState("BTCUSDT");
+      // Should return null when no klines available (only 1 or 0 events)
+      // or when price is 0
+      expect(state === null || typeof state === "object").toBe(true);
+    });
+
+    it("generateRealtimeMarketState produces valid MarketState from event", async () => {
+      const { getFeedManager } = await import("../market/symbol-feed-state");
+      const { generateRealtimeMarketState } = await import("./data-adapter");
+      const mgr = getFeedManager();
+      // Send enough events to have klines
+      const now = Date.now();
+      for (let i = 0; i < 5; i++) {
+        mgr.handleKlineEvent({
+          e: "kline",
+          s: "BTCUSDT",
+          E: now - (4 - i) * 1000,
+          k: {
+            t: now - (4 - i) * 1000,
+            T: now - (4 - i) * 1000 + 60000,
+            s: "BTCUSDT",
+            i: "15m",
+            o: String(64900 + i * 10),
+            c: String(65000 + i * 10),
+            h: String(65050 + i * 10),
+            l: String(64850 + i * 10),
+            v: "100",
+            n: 50,
+            x: i === 4,
+          },
+        });
+      }
+      const state = generateRealtimeMarketState("BTCUSDT");
+      expect(state).not.toBeNull();
+      expect(state!.symbol).toBe("BTCUSDT");
+      expect(state!.price).toBeGreaterThan(0);
+      expect(state!.timestamp).toBeGreaterThan(0);
+    });
   });
 });

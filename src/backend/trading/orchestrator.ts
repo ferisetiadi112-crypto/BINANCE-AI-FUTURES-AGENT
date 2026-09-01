@@ -25,6 +25,8 @@ import { RiskEngine } from "../risk/engine";
 import { PaperTradingEngine } from "../paper/engine";
 import { recordTradeExperience, recordNoTradeExperience } from "../ai/experience-engine";
 import { deriveLessons } from "../ai/lesson-engine";
+import { generateRealtimeMarketState } from "../services/data-adapter";
+import { getEnabledSymbols } from "../market/symbols";
 import { logger } from "../logger";
 
 export type OrchestratorState = {
@@ -162,6 +164,46 @@ export class TradingOrchestrator {
     return { decision, riskResult, trade };
   }
 
+  // ─── Real-Time Processing ───────────────────────────────────────
+
+  /**
+   * Process real-time market data for all enabled symbols from the WebSocket feed.
+   * Uses generateRealtimeMarketState() which reads from FeedManager (Binance WebSocket).
+   * OFFLINE/STALE data is rejected — null snapshots are skipped (no AI decision generated).
+   *
+   * Returns results for symbols where real-time data was available.
+   */
+  processRealtimeUpdate(): {
+    symbol: string;
+    result: { decision: AiDecision; riskResult: { approved: boolean; reason: string }; trade: PaperTrade | null } | null;
+    reason: string;
+  }[] {
+    const symbols = getEnabledSymbols();
+    const results: {
+      symbol: string;
+      result: { decision: AiDecision; riskResult: { approved: boolean; reason: string }; trade: PaperTrade | null } | null;
+      reason: string;
+    }[] = [];
+
+    for (const s of symbols) {
+      const marketState = generateRealtimeMarketState(s.symbol);
+      if (!marketState) {
+        results.push({ symbol: s.symbol, result: null, reason: "OFFLINE/STALE/insufficient_data" });
+        continue;
+      }
+
+      try {
+        const result = this.processMarketUpdate(marketState);
+        results.push({ symbol: s.symbol, result, reason: "OK" });
+      } catch (err) {
+        logger.error("orchestrator", `Error processing ${s.symbol}: ${err}`);
+        results.push({ symbol: s.symbol, result: null, reason: "ERROR" });
+      }
+    }
+
+    return results;
+  }
+
   // ─── Getters ─────────────────────────────────────────────────────
 
   getState(): OrchestratorState {
@@ -189,6 +231,21 @@ export class TradingOrchestrator {
   }
 
   // ─── Lifecycle ───────────────────────────────────────────────────
+
+  /**
+   * Get enabled symbols from the symbol universe.
+   */
+  getEnabledSymbols() {
+    return getEnabledSymbols();
+  }
+
+  /**
+   * Get real-time market state for a specific symbol from FeedManager.
+   * Returns null if feed is OFFLINE/STALE or insufficient data.
+   */
+  getRealtimeMarketState(symbol: string): MarketState | null {
+    return generateRealtimeMarketState(symbol);
+  }
 
   start(): void {
     this.state.systemStatus = "RUNNING";

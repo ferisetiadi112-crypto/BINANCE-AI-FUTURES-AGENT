@@ -23,6 +23,7 @@ import {
   getHealth,
   getPaperStatus,
   getFeedStatus,
+  getMarketSnapshot,
 } from "../backend/api";
 import type { ApiResponse } from "../types/api";
 
@@ -121,5 +122,12 @@ export async function fetchPaperStatus() {
 
 export async function fetchFeedStatus() {
   const result = await getFeedStatus();
+  return result as ApiResponse<any>;
+}
+
+// ─── Market Snapshot (Phase 8D) ────────────────────────────────────
+
+export async function fetchMarketSnapshot(symbol: string) {
+  const result = await getMarketSnapshot({ data: symbol });
   return result as ApiResponse<any>;
 }

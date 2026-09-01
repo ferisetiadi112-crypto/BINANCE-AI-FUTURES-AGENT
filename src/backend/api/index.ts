@@ -27,6 +27,7 @@ import {
   fetchHealth,
   fetchPaperStatus,
   fetchFeedStatus,
+  generateRealtimeMarketState,
   getDataSource,
 } from "../services/data-adapter";
 import type { ApiResponse } from "../../types/api";
@@ -167,3 +168,12 @@ export const getFeedStatus = createServerFn({ method: "GET" }).handler(
     return wrap(data);
   },
 );
+
+// ─── GET /api/market-snapshot ─────────────────────────────────────
+
+export const getMarketSnapshot = createServerFn({ method: "GET" })
+  .validator((symbol: string) => symbol)
+  .handler(async ({ data: symbol }) => {
+    const state = generateRealtimeMarketState(symbol);
+    return wrap(state);
+  });

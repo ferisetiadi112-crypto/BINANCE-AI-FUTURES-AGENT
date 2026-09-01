@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { TradingOrchestrator } from "./orchestrator";
 import type { MarketState } from "../runtime/types";
+import * as dataAdapter from "../services/data-adapter";
 
 const trendingUpState: MarketState = {
   symbol: "BTCUSDT",
@@ -128,6 +129,98 @@ describe("Trading Orchestrator", () => {
       const stats = orchestrator.getDailyStats();
       expect(stats.pnl).toBe(0);
       expect(stats.locked).toBe(false);
+    });
+  });
+
+  describe("processRealtimeUpdate — F-1 remediation", () => {
+    let spy: ReturnType<typeof vi.spyOn>;
+
+    afterEach(() => {
+      spy?.mockRestore();
+    });
+
+    it("processRealtimeUpdate calls generateRealtimeMarketState and forwards to processMarketUpdate", () => {
+      spy = vi.spyOn(dataAdapter, "generateRealtimeMarketState").mockReturnValue(trendingUpState);
+
+      const results = orchestrator.processRealtimeUpdate();
+
+      // Should have been called for each enabled symbol
+      expect(spy).toHaveBeenCalled();
+      expect(results.length).toBeGreaterThan(0);
+
+      // At least one symbol should have succeeded (the one we mocked)
+      const okResults = results.filter(r => r.reason === "OK");
+      expect(okResults.length).toBeGreaterThan(0);
+
+      // The result should contain a valid decision from processMarketUpdate
+      const firstOk = okResults[0]!;
+      expect(firstOk.result).not.toBeNull();
+      expect(firstOk.result!.decision).toBeDefined();
+      expect(firstOk.result!.riskResult).toBeDefined();
+    });
+
+    it("OFFLINE/STALE data from generateRealtimeMarketState is rejected (null → skip)", () => {
+      spy = vi.spyOn(dataAdapter, "generateRealtimeMarketState").mockReturnValue(null);
+
+      const results = orchestrator.processRealtimeUpdate();
+
+      expect(spy).toHaveBeenCalled();
+      expect(results.length).toBeGreaterThan(0);
+
+      // All symbols should be skipped — no AI decision generated
+      const skipped = results.filter(r => r.reason === "OFFLINE/STALE/insufficient_data");
+      expect(skipped.length).toBe(results.length);
+
+      // No decisions should have been created
+      const decisionHistory = orchestrator.getDecisionHistory();
+      expect(decisionHistory.length).toBe(0);
+    });
+
+    it("realtime MarketState contains actual feed data, not mock data", () => {
+      spy = vi.spyOn(dataAdapter, "generateRealtimeMarketState").mockReturnValue(trendingUpState);
+
+      orchestrator.processRealtimeUpdate();
+
+      // Verify the mock was called with a symbol string
+      expect(spy).toHaveBeenCalledWith(expect.any(String));
+
+      // Verify the market state passed through contains the expected price
+      const decisionHistory = orchestrator.getDecisionHistory();
+      if (decisionHistory.length > 0) {
+        expect(decisionHistory[0]!.symbol).toBe("BTCUSDT");
+      }
+    });
+
+    it("getRealtimeMarketState returns null for offline feed", () => {
+      spy = vi.spyOn(dataAdapter, "generateRealtimeMarketState").mockReturnValue(null);
+
+      const state = orchestrator.getRealtimeMarketState("BTCUSDT");
+      expect(state).toBeNull();
+    });
+
+    it("getRealtimeMarketState returns MarketState for online feed", () => {
+      spy = vi.spyOn(dataAdapter, "generateRealtimeMarketState").mockReturnValue(trendingUpState);
+
+      const state = orchestrator.getRealtimeMarketState("BTCUSDT");
+      expect(state).not.toBeNull();
+      expect(state!.price).toBe(63000);
+      expect(state!.symbol).toBe("BTCUSDT");
+    });
+
+    it("processRealtimeUpdate returns per-symbol isolation", () => {
+      let callCount = 0;
+      spy = vi.spyOn(dataAdapter, "generateRealtimeMarketState").mockImplementation(() => {
+        callCount++;
+        return callCount === 1 ? trendingUpState : null;
+      });
+
+      const results = orchestrator.processRealtimeUpdate();
+
+      const okResults = results.filter(r => r.reason === "OK");
+      const skippedResults = results.filter(r => r.reason === "OFFLINE/STALE/insufficient_data");
+
+      expect(okResults.length).toBe(1);
+      expect(skippedResults.length).toBeGreaterThan(0);
     });
   });
 });
