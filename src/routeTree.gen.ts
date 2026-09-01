@@ -10,33 +10,53 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AiIntelligenceRouteImport } from './routes/ai-intelligence'
+import { Route as MarketAnalysisRouteImport } from './routes/market-analysis'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AiIntelligenceRoute = AiIntelligenceRouteImport.update({
+  id: '/ai-intelligence',
+  path: '/ai-intelligence',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MarketAnalysisRoute = MarketAnalysisRouteImport.update({
+  id: '/market-analysis',
+  path: '/market-analysis',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/ai-intelligence': typeof AiIntelligenceRoute
+  '/market-analysis': typeof MarketAnalysisRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/ai-intelligence': typeof AiIntelligenceRoute
+  '/market-analysis': typeof MarketAnalysisRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/ai-intelligence': typeof AiIntelligenceRoute
+  '/market-analysis': typeof MarketAnalysisRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/ai-intelligence' | '/market-analysis'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/ai-intelligence' | '/market-analysis'
+  id: '__root__' | '/' | '/ai-intelligence' | '/market-analysis'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AiIntelligenceRoute: typeof AiIntelligenceRoute
+  MarketAnalysisRoute: typeof MarketAnalysisRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +68,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ai-intelligence': {
+      id: '/ai-intelligence'
+      path: '/ai-intelligence'
+      fullPath: '/ai-intelligence'
+      preLoaderRoute: typeof AiIntelligenceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/market-analysis': {
+      id: '/market-analysis'
+      path: '/market-analysis'
+      fullPath: '/market-analysis'
+      preLoaderRoute: typeof MarketAnalysisRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AiIntelligenceRoute: AiIntelligenceRoute,
+  MarketAnalysisRoute: MarketAnalysisRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
