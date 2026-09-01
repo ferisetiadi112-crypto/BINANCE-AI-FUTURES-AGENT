@@ -223,4 +223,83 @@ describe("Trading Orchestrator", () => {
       expect(skippedResults.length).toBeGreaterThan(0);
     });
   });
+
+  describe("Phase 8E — full pipeline: MarketState → AI Decision → Risk → Paper", () => {
+    let spy: ReturnType<typeof vi.spyOn>;
+
+    afterEach(() => {
+      spy?.mockRestore();
+    });
+
+    it("valid MarketState flows through full pipeline", () => {
+      const result = orchestrator.processMarketUpdate(trendingUpState);
+      // Full pipeline produces all three outputs
+      expect(result.decision).toBeDefined();
+      expect(result.riskResult).toBeDefined();
+      expect(typeof result.riskResult.approved).toBe("boolean");
+      // decision must contain standard fields
+      expect(result.decision.symbol).toBe("BTCUSDT");
+      expect(result.decision.direction).toBeDefined();
+      expect(result.decision.strategy).toBeDefined();
+    });
+
+    it("Risk Engine rejection blocks Paper Trading execution", () => {
+      // Place engine in locked state via daily loss
+      orchestrator.getRiskEngine().updateDailyPnl(-0.55);
+      expect(orchestrator.getRiskEngine().isSystemLocked()).toBe(true);
+
+      const result = orchestrator.processMarketUpdate(trendingUpState);
+      expect(result.riskResult.approved).toBe(false);
+      expect(result.trade).toBeNull();
+    });
+
+    it("NO_TRADE decision does not trigger Paper Trading execution", () => {
+      const result = orchestrator.processMarketUpdate(uncertainState);
+      // AI should produce NO_TRADE for uncertain stale-like data
+      expect(result.decision.direction).toBe("NO_TRADE");
+      expect(result.trade).toBeNull();
+    });
+
+    it("decision result tracks riskResult field on the decision object", () => {
+      const result = orchestrator.processMarketUpdate(trendingUpState);
+      // Risk result is recorded on the decision itself
+      expect(result.decision.riskResult).toBeDefined();
+      expect(["APPROVED", "REJECTED"]).toContain(result.decision.riskResult!);
+    });
+
+    it("multiple consecutive processMarketUpdate calls work deterministically", () => {
+      const r1 = orchestrator.processMarketUpdate(trendingUpState);
+      const r2 = orchestrator.processMarketUpdate(trendingUpState);
+      const history = orchestrator.getDecisionHistory();
+      expect(history.length).toBeGreaterThanOrEqual(2);
+      // Both should produce decisions (may differ due to duplicate detection)
+      expect(r1.decision).toBeDefined();
+      expect(r2.decision).toBeDefined();
+    });
+
+    it("error in one symbol does not stop other symbols in processRealtimeUpdate", () => {
+      let callCount = 0;
+      spy = vi.spyOn(dataAdapter, "generateRealtimeMarketState").mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) throw new Error("Mock error for first symbol");
+        if (callCount === 2) return trendingUpState;
+        return null;
+      });
+
+      const results = orchestrator.processRealtimeUpdate();
+      const errored = results.filter(r => r.reason === "ERROR");
+      const ok = results.filter(r => r.reason === "OK");
+
+      expect(errored.length).toBe(1);
+      expect(ok.length).toBe(1);
+    });
+
+    it("Paper Engine remains in paper-only mode after full cycle", () => {
+      orchestrator.processMarketUpdate(trendingUpState);
+      const stats = orchestrator.getPaperStats();
+      expect(stats).toBeDefined();
+      expect(typeof stats.capital).toBe("number");
+      expect(stats.capital).toBeGreaterThan(0);
+    });
+  });
 });

@@ -186,13 +186,13 @@ export class TradingOrchestrator {
     }[] = [];
 
     for (const s of symbols) {
-      const marketState = generateRealtimeMarketState(s.symbol);
-      if (!marketState) {
-        results.push({ symbol: s.symbol, result: null, reason: "OFFLINE/STALE/insufficient_data" });
-        continue;
-      }
-
       try {
+        const marketState = generateRealtimeMarketState(s.symbol);
+        if (!marketState) {
+          results.push({ symbol: s.symbol, result: null, reason: "OFFLINE/STALE/insufficient_data" });
+          continue;
+        }
+
         const result = this.processMarketUpdate(marketState);
         results.push({ symbol: s.symbol, result, reason: "OK" });
       } catch (err) {

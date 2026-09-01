@@ -47,12 +47,20 @@ const DEFAULT_RISK_CONFIG: RiskConfig = {
 
 // ─── Risk Engine ──────────────────────────────────────────────────────
 
+type RecentDecision = {
+  symbol: string;
+  direction: string;
+  strategy: string;
+  timestamp: number;
+};
+
 export class RiskEngine {
   private config: RiskConfig;
   private dailyPnl = 0;
   private dailyTrades = 0;
   private isLocked = false;
   private lockReason = "";
+  private recentDecisions: RecentDecision[] = [];
 
   constructor(config: Partial<RiskConfig> = {}) {
     this.config = { ...DEFAULT_RISK_CONFIG, ...config };
@@ -235,8 +243,39 @@ export class RiskEngine {
   }
 
   private checkDuplicateDecision(decision: AiDecision): RiskCheckResult["checks"][0] {
-    // Simple duplicate detection based on recent decisions
-    // In production, this would check the database
+    // Deterministic duplicate detection: same symbol + direction + strategy within 30 seconds
+    const now = Date.now();
+    const DUPLICATE_WINDOW_MS = 30_000;
+
+    // Clean old entries
+    this.recentDecisions = this.recentDecisions.filter(
+      (d) => now - d.timestamp < DUPLICATE_WINDOW_MS,
+    );
+
+    // Check for duplicate
+    const isDuplicate = this.recentDecisions.some(
+      (d) =>
+        d.symbol === decision.symbol &&
+        d.direction === decision.direction &&
+        d.strategy === decision.strategy,
+    );
+
+    // Track this decision
+    this.recentDecisions.push({
+      symbol: decision.symbol,
+      direction: decision.direction,
+      strategy: decision.strategy,
+      timestamp: now,
+    });
+
+    if (isDuplicate) {
+      return {
+        name: "duplicate_check",
+        passed: false,
+        message: `Duplicate decision: ${decision.direction} ${decision.symbol} via ${decision.strategy} within ${DUPLICATE_WINDOW_MS / 1000}s`,
+      };
+    }
+
     return {
       name: "duplicate_check",
       passed: true,

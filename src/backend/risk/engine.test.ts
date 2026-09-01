@@ -162,6 +162,71 @@ describe("Risk Engine", () => {
     });
   });
 
+  describe("duplicate decision detection", () => {
+    it("rejects duplicate decision within 30s window", () => {
+      const decision1: AiDecision = { ...mockDecision, direction: "LONG", strategy: "TREND_FOLLOWING" };
+      const decision2: AiDecision = { ...mockDecision, direction: "LONG", strategy: "TREND_FOLLOWING" };
+
+      // First decision passes
+      const result1 = engine.check(decision1, mockMarketState, { symbol: "BTCUSDT", side: "FLAT", size: 0 });
+      expect(result1.checks.some(c => c.name === "duplicate_check" && c.passed)).toBe(true);
+
+      // Second identical decision is rejected
+      const result2 = engine.check(decision2, mockMarketState, { symbol: "BTCUSDT", side: "FLAT", size: 0 });
+      expect(result2.approved).toBe(false);
+      expect(result2.checks.some(c => c.name === "duplicate_check" && !c.passed)).toBe(true);
+    });
+
+    it("allows different direction for same symbol", () => {
+      const longDecision: AiDecision = { ...mockDecision, direction: "LONG", strategy: "TREND_FOLLOWING" };
+      const shortDecision: AiDecision = { ...mockDecision, direction: "SHORT", strategy: "TREND_FOLLOWING" };
+
+      engine.check(longDecision, mockMarketState, { symbol: "BTCUSDT", side: "FLAT", size: 0 });
+      const result = engine.check(shortDecision, mockMarketState, { symbol: "BTCUSDT", side: "FLAT", size: 0 });
+      expect(result.checks.some(c => c.name === "duplicate_check" && c.passed)).toBe(true);
+    });
+
+    it("allows same direction for different strategy", () => {
+      const trendDecision: AiDecision = { ...mockDecision, direction: "LONG", strategy: "TREND_FOLLOWING" };
+      const momentumDecision: AiDecision = { ...mockDecision, direction: "LONG", strategy: "MOMENTUM" };
+
+      engine.check(trendDecision, mockMarketState, { symbol: "BTCUSDT", side: "FLAT", size: 0 });
+      const result = engine.check(momentumDecision, mockMarketState, { symbol: "BTCUSDT", side: "FLAT", size: 0 });
+      expect(result.checks.some(c => c.name === "duplicate_check" && c.passed)).toBe(true);
+    });
+
+    it("allows same direction for different symbol", () => {
+      const btcDecision: AiDecision = { ...mockDecision, direction: "LONG", symbol: "BTCUSDT" };
+      const ethDecision: AiDecision = { ...mockDecision, direction: "LONG", symbol: "ETHUSDT" };
+
+      engine.check(btcDecision, mockMarketState, { symbol: "BTCUSDT", side: "FLAT", size: 0 });
+      const ethMarketState = { ...mockMarketState, symbol: "ETHUSDT" };
+      const result = engine.check(ethDecision, ethMarketState, { symbol: "ETHUSDT", side: "FLAT", size: 0 });
+      expect(result.checks.some(c => c.name === "duplicate_check" && c.passed)).toBe(true);
+    });
+
+    it("NO_TRADE is not affected by duplicate detection", () => {
+      const noTrade1: AiDecision = { ...mockDecision, direction: "NO_TRADE" };
+      const noTrade2: AiDecision = { ...mockDecision, direction: "NO_TRADE" };
+
+      const result1 = engine.check(noTrade1, mockMarketState, { symbol: "BTCUSDT", side: "FLAT", size: 0 });
+      const result2 = engine.check(noTrade2, mockMarketState, { symbol: "BTCUSDT", side: "FLAT", size: 0 });
+      // NO_TRADE returns early without reaching duplicate check
+      expect(result1.approved).toBe(true);
+      expect(result2.approved).toBe(true);
+    });
+
+    it("duplicate detection is deterministic for same inputs", () => {
+      const d1: AiDecision = { ...mockDecision, direction: "LONG", strategy: "TREND_FOLLOWING" };
+      const d2: AiDecision = { ...mockDecision, direction: "LONG", strategy: "TREND_FOLLOWING" };
+
+      engine.check(d1, mockMarketState, { symbol: "BTCUSDT", side: "FLAT", size: 0 });
+      const result = engine.check(d2, mockMarketState, { symbol: "BTCUSDT", side: "FLAT", size: 0 });
+      expect(result.approved).toBe(false);
+      expect(result.checks.some(c => c.name === "duplicate_check" && !c.passed)).toBe(true);
+    });
+  });
+
   describe("getDailyStats", () => {
     it("returns current daily stats", () => {
       engine.updateDailyPnl(0.10);
