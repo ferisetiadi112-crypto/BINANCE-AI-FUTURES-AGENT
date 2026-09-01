@@ -89,6 +89,12 @@ export function validateCandle(candle: CandleData): ValidationResult {
   };
 }
 
+export type GapInfo = {
+  expectedTime: number;
+  actualTime: number;
+  gapSize: number;
+};
+
 export function validateKlines(klines: CandleData[]): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -131,6 +137,54 @@ export function validateKlines(klines: CandleData[]): ValidationResult {
     errors,
     warnings,
   };
+}
+
+/**
+ * Detect gaps in a sorted kline series.
+ * A gap is when the difference between consecutive openTimes exceeds
+ * the expected interval (with 50% tolerance for late candles).
+ */
+export function detectGaps(
+  klines: CandleData[],
+  intervalMs: number,
+): GapInfo[] {
+  const gaps: GapInfo[] = [];
+  const tolerance = intervalMs * 0.5;
+
+  for (let i = 1; i < klines.length; i++) {
+    const prev = klines[i - 1]!;
+    const curr = klines[i]!;
+    const diff = curr.openTime - prev.openTime;
+
+    if (diff > intervalMs + tolerance) {
+      gaps.push({
+        expectedTime: prev.openTime + intervalMs,
+        actualTime: curr.openTime,
+        gapSize: Math.floor(diff / intervalMs) - 1,
+      });
+    }
+  }
+
+  if (gaps.length > 0) {
+    const totalMissing = gaps.reduce((sum, g) => sum + g.gapSize, 0);
+    logger.warn("validation", `Detected ${gaps.length} gap(s) with ${totalMissing} missing candle(s)`);
+  }
+
+  return gaps;
+}
+
+/** Parse interval string to milliseconds */
+export function intervalToMs(interval: string): number {
+  const match = interval.match(/^(\d+)(m|h|d)$/);
+  if (!match) return 15 * 60 * 1000; // default 15m
+  const value = Number(match[1]);
+  const unit = match[2];
+  switch (unit) {
+    case "m": return value * 60 * 1000;
+    case "h": return value * 60 * 60 * 1000;
+    case "d": return value * 24 * 60 * 60 * 1000;
+    default: return 15 * 60 * 1000;
+  }
 }
 
 export function validateTicker(ticker: {

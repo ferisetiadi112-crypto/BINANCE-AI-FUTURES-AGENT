@@ -35,6 +35,7 @@ import type {
   RiskEvent,
   AiExperiment,
   AiModel,
+  PaperStatusResponse,
 } from "../../types/api";
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -406,4 +407,72 @@ export function getAuditData() {
 
 export function getCandlesData(): Candle[] {
   return mockCandles;
+}
+
+export function getPaperStatus(): PaperStatusResponse {
+  return {
+    mode: "PAPER",
+    capital: mockAccount.balance,
+    initialCapital: mockSystemConfig.initialCapital,
+    totalPnl: mockRecentTrades.reduce((s, t) => s + t.pnl, 0),
+    dailyPnl: 0.12,
+    totalTrades: 1284,
+    winRate: 68.4,
+    profitFactor: 2.34,
+    maxDrawdown: -7.8,
+    activePosition: {
+      symbol: "BTCUSDT",
+      side: "LONG",
+      size: 0.42,
+      entryPrice: 63112.4,
+      markPrice: 63884.9,
+      unrealizedPnl: 324.45,
+      unrealizedPnlPercent: 1.22,
+      leverage: 5,
+      margin: 5301.44,
+      openedAt: "2026-08-31T07:15:00Z",
+      durationMinutes: 480,
+    },
+    recentTrades: mockRecentTrades.map(t => ({
+      id: t.id,
+      symbol: t.symbol,
+      side: t.side,
+      entryPrice: t.entryPrice,
+      exitPrice: t.exitPrice,
+      pnl: t.pnl,
+      outcome: t.pnl > 0 ? "WIN" as const : t.pnl < 0 ? "LOSS" as const : "BREAKEVEN" as const,
+      closedAt: t.closedAt,
+      strategyName: t.strategyName,
+    })),
+    feedState: "ONLINE" as const,
+    feedSymbols: [
+      { symbol: "BTCUSDT", feedState: "ONLINE" as const, lastUpdate: Date.now() - 2000, dataAgeMs: 2000, candleCount: 100, trend: "UP", price: 63884.90, change24h: 785.20 },
+      { symbol: "ETHUSDT", feedState: "ONLINE" as const, lastUpdate: Date.now() - 3000, dataAgeMs: 3000, candleCount: 100, trend: "UP", price: 3402.15, change24h: 28.92 },
+      { symbol: "SOLUSDT", feedState: "ONLINE" as const, lastUpdate: Date.now() - 4000, dataAgeMs: 4000, candleCount: 100, trend: "DOWN", price: 182.44, change24h: -0.77 },
+      { symbol: "BNBUSDT", feedState: "ONLINE" as const, lastUpdate: Date.now() - 5000, dataAgeMs: 5000, candleCount: 100, trend: "FLAT", price: 608.20, change24h: 1.88 },
+    ],
+    lastAiDecision: {
+      action: mockAiIntelligence.decision.action,
+      symbol: mockAiIntelligence.decision.symbol,
+      confidence: mockAiIntelligence.decision.confidence,
+      strategyName: mockAiIntelligence.decision.strategyName,
+      timestamp: mockAiIntelligence.decision.timestamp,
+    },
+    riskEngineStatus: "PAPER",
+    emergencyStopState: "ARMED",
+    noRealTrading: true,
+  };
+}
+
+export function getMarketFeedStatus() {
+  return mockTickers.map(t => ({
+    symbol: t.symbol,
+    feedState: "ONLINE" as const,
+    lastUpdate: Date.now() - 3000,
+    dataAgeMs: 3000,
+    candleCount: 100,
+    trend: t.changePercent24h > 0 ? "UP" : t.changePercent24h < -0.5 ? "DOWN" : "FLAT",
+    price: t.price,
+    change24h: t.change24h,
+  }));
 }

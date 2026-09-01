@@ -190,6 +190,92 @@ export async function getMarketSnapshot(symbol: string): Promise<MarketSnapshot>
   };
 }
 
+// ─── Multi-Symbol Batch Fetching ─────────────────────────────────────
+
+/** Maximum concurrent requests to respect Binance rate limits */
+const MAX_CONCURRENT = 3;
+const INTER_SYMBOL_DELAY_MS = 200;
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Fetch tickers for multiple symbols with rate limiting.
+ * Returns results keyed by symbol; failed symbols are omitted.
+ */
+export async function getTickersForSymbols(symbols: string[]): Promise<Map<string, BinanceTicker>> {
+  const results = new Map<string, BinanceTicker>();
+  for (let i = 0; i < symbols.length; i += MAX_CONCURRENT) {
+    const batch = symbols.slice(i, i + MAX_CONCURRENT);
+    const outcomes = await Promise.allSettled(batch.map(s => getTicker24h(s)));
+    for (let j = 0; j < outcomes.length; j++) {
+      const outcome = outcomes[j]!;
+      if (outcome.status === "fulfilled") {
+        results.set(batch[j]!, outcome.value);
+      } else {
+        logger.warn("binance-market", `Failed to fetch ticker for ${batch[j]}: ${outcome.reason}`);
+      }
+    }
+    if (i + MAX_CONCURRENT < symbols.length) {
+      await sleep(INTER_SYMBOL_DELAY_MS);
+    }
+  }
+  logger.info("binance-market", `Fetched tickers for ${results.size}/${symbols.length} symbols`);
+  return results;
+}
+
+/**
+ * Fetch klines for multiple symbols with rate limiting.
+ * Returns results keyed by symbol; failed symbols are omitted.
+ */
+export async function getKlinesForSymbols(
+  symbols: string[],
+  interval = "15m",
+  limit = 100,
+): Promise<Map<string, BinanceKline[]>> {
+  const results = new Map<string, BinanceKline[]>();
+  for (let i = 0; i < symbols.length; i += MAX_CONCURRENT) {
+    const batch = symbols.slice(i, i + MAX_CONCURRENT);
+    const outcomes = await Promise.allSettled(batch.map(s => getKlines(s, interval, limit)));
+    for (let j = 0; j < outcomes.length; j++) {
+      const outcome = outcomes[j]!;
+      if (outcome.status === "fulfilled") {
+        results.set(batch[j]!, outcome.value);
+      } else {
+        logger.warn("binance-market", `Failed to fetch klines for ${batch[j]}: ${outcome.reason}`);
+      }
+    }
+    if (i + MAX_CONCURRENT < symbols.length) {
+      await sleep(INTER_SYMBOL_DELAY_MS);
+    }
+  }
+  logger.info("binance-market", `Fetched klines for ${results.size}/${symbols.length} symbols`);
+  return results;
+}
+
+export type MultiSymbolSnapshot = {
+  symbols: string[];
+  tickers: Map<string, BinanceTicker>;
+  timestamp: number;
+  successCount: number;
+  failCount: number;
+};
+
+/**
+ * Batch-fetch tickers for a list of symbols. Returns a combined snapshot.
+ */
+export async function getMultiSymbolSnapshot(symbols: string[]): Promise<MultiSymbolSnapshot> {
+  const tickers = await getTickersForSymbols(symbols);
+  return {
+    symbols,
+    tickers,
+    timestamp: Date.now(),
+    successCount: tickers.size,
+    failCount: symbols.length - tickers.size,
+  };
+}
+
 // ─── Connection Health ────────────────────────────────────────────────
 
 export async function checkConnection(): Promise<boolean> {

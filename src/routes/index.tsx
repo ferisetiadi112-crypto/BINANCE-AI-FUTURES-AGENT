@@ -6,10 +6,15 @@ import {
   ArrowUpRight,
   BarChart3,
   BrainCircuit,
+  CircleAlert,
+  CircleCheck,
+  Clock,
   Cpu,
+  Crosshair,
   Database,
   Gauge,
   LineChart,
+  Radio,
   Shield,
   Target,
   TrendingUp,
@@ -18,7 +23,7 @@ import {
 } from "lucide-react";
 import { Meter, PageHeader, Panel, Stat, Tag } from "@/components/space/Panel";
 import { CandleChart, EquityChart, SignalRadar } from "@/components/space/Charts";
-import { fetchDashboard, fetchRuntime, fetchLearning, fetchSystem, fetchHealth } from "@/api/client";
+import { fetchDashboard, fetchRuntime, fetchLearning, fetchSystem, fetchHealth, fetchPaperStatus } from "@/api/client";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -56,6 +61,11 @@ function Dashboard() {
     queryKey: ["health"],
     queryFn: fetchHealth,
   });
+  const { data: paperResp } = useQuery({
+    queryKey: ["paper-status"],
+    queryFn: fetchPaperStatus,
+    refetchInterval: 10000, // Poll every 10s for live status
+  });
 
   const d = dashResp?.data;
   const runtime = runtimeResp?.data;
@@ -80,6 +90,8 @@ function Dashboard() {
   const learningStats = learning?.experienceStats;
   const derivedLessons = learning?.derivedLessons?.slice(0, 3) || [];
   const systemNodes = system?.nodes || [];
+  const paper = paperResp?.data;
+  const feedSymbols = paper?.feedSymbols || [];
 
   return (
     <div className="mx-auto max-w-[110rem]">
@@ -105,7 +117,7 @@ function Dashboard() {
       {/* ── System Status Bar ───────────────────────────────────────── */}
       <Panel title="System Status" code="OBSERVATORY" glow>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <StatusIndicator label="Market Feed" state="ONLINE" />
+          <StatusIndicator label="Market Feed" state={paper?.feedState || "ONLINE"} />
           <StatusIndicator label="Runtime Intel" state="ONLINE" />
           <StatusIndicator label="AI Engine" state="ONLINE" />
           <StatusIndicator label="Risk Engine" state={riskEnv.status === "NOMINAL" ? "ONLINE" : "PAUSED"} />
@@ -222,19 +234,67 @@ function Dashboard() {
           ]} height={230} />
         </Panel>
 
-        <Panel title="Paper Performance" code="SIMULATION" bodyClassName="p-0">
+        <Panel title="Paper Trading Observatory" code="SIMULATION" bodyClassName="p-0" action={<Tag tone="gain">LIVE</Tag>}>
           <div className="p-4 space-y-3">
             <div className="flex items-center gap-2 rounded-sm border border-primary/30 bg-primary/5 px-3 py-2">
               <Gauge className="h-4 w-4 text-primary" />
               <span className="font-mono text-[0.7rem] uppercase tracking-wider text-primary">Paper Trading Mode</span>
+              <Tag tone="gain">{paper?.mode || "PAPER"}</Tag>
             </div>
-            <Row k="Virtual Capital" v={money(d.account.balance)} tone="gain" />
-            <Row k="Daily PnL" v={money(d.dailyPnl)} tone={d.dailyPnl >= 0 ? "gain" : "loss"} />
-            <Row k="Total PnL" v={money(d.totalPnl)} tone={d.totalPnl >= 0 ? "gain" : "loss"} />
-            <Row k="Win Rate" v={`${d.winRate}%`} />
-            <Row k="Trades" v={`${d.tradeCount}`} />
-            <Row k="Profit Factor" v={d.profitFactor.toFixed(2)} />
-            <Row k="Max Drawdown" v={`${d.maxDrawdown}%`} tone="loss" />
+
+            {/* Active Position */}
+            {paper?.activePosition ? (
+              <div className="rounded-sm border border-gain/40 bg-gain/5 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="label-mono text-[0.6rem]">ACTIVE POSITION</span>
+                  <Tag tone={paper.activePosition.side === "LONG" ? "gain" : "violet"}>{paper.activePosition.side}</Tag>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <MiniStat label="Symbol" value={paper.activePosition.symbol} />
+                  <MiniStat label="Size" value={`${paper.activePosition.size} × ${paper.activePosition.leverage}x`} />
+                  <MiniStat label="Entry" value={`$${paper.activePosition.entryPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`} />
+                  <MiniStat label="Mark" value={`$${paper.activePosition.markPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`} />
+                  <MiniStat label="Unrealized PnL" value={money(paper.activePosition.unrealizedPnl)} />
+                  <MiniStat label="Duration" value={`${paper.activePosition.durationMinutes}m`} />
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-sm border border-hairline bg-muted/30 px-3 py-2">
+                <span className="label-mono text-[0.6rem]">NO ACTIVE POSITION</span>
+              </div>
+            )}
+
+            {/* Performance Summary */}
+            <div className="border-t border-hairline pt-3 space-y-1.5">
+              <Row k="Virtual Capital" v={money(paper?.capital || d.account.balance)} tone="gain" />
+              <Row k="Total PnL" v={money(paper?.totalPnl || d.totalPnl)} tone={(paper?.totalPnl || d.totalPnl) >= 0 ? "gain" : "loss"} />
+              <Row k="Win Rate" v={`${paper?.winRate || d.winRate}%`} />
+              <Row k="Trades" v={`${paper?.totalTrades || d.tradeCount}`} />
+              <Row k="Profit Factor" v={(paper?.profitFactor || d.profitFactor).toFixed(2)} />
+              <Row k="Max Drawdown" v={`${paper?.maxDrawdown || d.maxDrawdown}%`} tone="loss" />
+            </div>
+
+            {/* Last AI Decision */}
+            {paper?.lastAiDecision && (
+              <div className="border-t border-hairline pt-3">
+                <div className="flex items-center justify-between">
+                  <span className="label-mono text-[0.6rem]">LAST AI DECISION</span>
+                  <Tag tone="cyan">{paper.lastAiDecision.timestamp}</Tag>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <MiniStat label="Action" value={paper.lastAiDecision.action} />
+                  <MiniStat label="Confidence" value={`${paper.lastAiDecision.confidence}%`} />
+                  <MiniStat label="Symbol" value={paper.lastAiDecision.symbol} />
+                  <MiniStat label="Strategy" value={paper.lastAiDecision.strategyName} />
+                </div>
+              </div>
+            )}
+
+            {/* Safety */}
+            <div className="flex items-center gap-2 rounded-sm border border-gain/40 bg-gain/5 px-3 py-2">
+              <Shield className="h-4 w-4 text-gain" />
+              <span className="font-mono text-[0.68rem] uppercase tracking-[0.12em] text-gain">Risk Engine: {paper?.riskEngineStatus || "PAPER"} · {paper?.emergencyStopState || "ARMED"}</span>
+            </div>
           </div>
         </Panel>
       </div>
@@ -352,44 +412,7 @@ function Dashboard() {
       </div>
 
       {/* ── Market Overview ─────────────────────────────────────────── */}
-      <div className="mt-3">
-        <Panel title="Market Overview" code="BINANCE FUTURES" action={<Tag tone="gain">SIM FEED</Tag>}>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[40rem] border-collapse">
-              <thead>
-                <tr className="border-b border-hairline">
-                  {["Symbol", "Price", "Trend", "Momentum", "Regime", "Feed"].map((h) => (
-                    <th key={h} className="label-mono px-4 py-2 text-left font-normal text-[0.65rem]">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  { symbol: "BTCUSDT", price: d.currentPrice, trend: "UP", momentum: "STRONG", regime: aiIntel?.regime || "UNKNOWN", feed: "ONLINE" },
-                  { symbol: "ETHUSDT", price: d.currentPrice * 0.053, trend: "UP", momentum: "MODERATE", regime: "TRENDING", feed: "ONLINE" },
-                  { symbol: "SOLUSDT", price: d.currentPrice * 0.0029, trend: "DOWN", momentum: "WEAK", regime: "RANGING", feed: "ONLINE" },
-                  { symbol: "BNBUSDT", price: d.currentPrice * 0.0096, trend: "FLAT", momentum: "WEAK", regime: "UNCERTAIN", feed: "ONLINE" },
-                ].map((m) => (
-                  <tr key={m.symbol} className="border-b border-hairline/60 transition-colors last:border-0 hover:bg-primary/5">
-                    <td className="px-4 py-2.5 font-mono text-xs font-semibold text-foreground">{m.symbol}</td>
-                    <td className="px-4 py-2.5 font-mono text-xs tabular-nums text-foreground">${m.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-                    <td className="px-4 py-2.5">
-                      <Tag tone={m.trend === "UP" ? "gain" : m.trend === "DOWN" ? "loss" : "default"}>{m.trend}</Tag>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <Tag tone={m.momentum === "STRONG" ? "gain" : m.momentum === "WEAK" ? "loss" : "default"}>{m.momentum}</Tag>
-                    </td>
-                    <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{m.regime}</td>
-                    <td className="px-4 py-2.5">
-                      <Tag tone="gain">{m.feed}</Tag>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
-      </div>
+      <MarketOverview d={d} aiIntel={aiIntel} feedSymbols={feedSymbols} />
 
       {/* ── Safety Footer ───────────────────────────────────────────── */}
       <div className="mt-3 mb-6">
@@ -444,11 +467,78 @@ export function GaugeBar({ label, used, cap, tone }: { label: string; used: numb
       <div className="flex items-baseline justify-between">
         <span className="label-mono">{label}</span>
         <span className="font-mono text-[0.7rem] tabular-nums text-foreground">
-          ${used.toLocaleString()} / ${cap.toLocaleString()}
+          {"$" + used.toLocaleString()} / {"$" + cap.toLocaleString()}
         </span>
       </div>
       <Meter value={pct} tone={tone} className="mt-1.5" />
       <div className="mt-1 font-mono text-[0.6rem] text-muted-foreground">{pct.toFixed(1)}% consumed</div>
     </div>
+  );
+}
+
+function FeedDot({ state }: { state: string }) {
+  const color = state === "ONLINE" ? "bg-gain" : state === "DEGRADED" ? "bg-amber-signal" : state === "STALE" ? "bg-amber-signal" : "bg-loss";
+  const animate = state === "ONLINE" ? "animate-pulse" : "";
+  return (
+    <div className="flex items-center justify-center">
+      <span className={`h-2.5 w-2.5 rounded-full ${color} ${animate}`} />
+    </div>
+  );
+}
+
+const MARKET_ROWS = [
+  { symbol: "BTCUSDT", priceKey: 1 as const, change24h: 785.20, trend: "UP" },
+  { symbol: "ETHUSDT", priceKey: 0.053 as const, change24h: 28.92, trend: "UP" },
+  { symbol: "SOLUSDT", priceKey: 0.0029 as const, change24h: -0.77, trend: "DOWN" },
+  { symbol: "BNBUSDT", priceKey: 0.0096 as const, change24h: 1.88, trend: "FLAT" },
+];
+
+function MarketOverview({ d, aiIntel, feedSymbols }: { d: any; aiIntel: any; feedSymbols: any[] }) {
+  return (
+    <div className="mt-3">
+      <Panel title="Market Overview" code="BINANCE FUTURES" action={<Tag tone="gain">SIM FEED</Tag>}>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[50rem] border-collapse">
+            <thead>
+              <tr className="border-b border-hairline">
+                {["Symbol", "Price", "24h Δ", "Trend", "Feed Status", "Data Age", "Feed"].map((h) => (
+                  <th key={h} className="label-mono px-4 py-2 text-left font-normal text-[0.65rem]">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {MARKET_ROWS.map((m) => (
+                <MarketRow key={m.symbol} m={m} d={d} aiIntel={aiIntel} feedSymbols={feedSymbols} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function MarketRow({ m, d, aiIntel, feedSymbols }: { m: any; d: any; aiIntel: any; feedSymbols: any[] }) {
+  const feed = feedSymbols.find((f: any) => f.symbol === m.symbol);
+  const feedState = (feed?.feedState || "ONLINE") as string;
+  const dataAge = feed?.dataAgeMs || 3000;
+  const ageLabel = dataAge < 60000 ? String(dataAge / 1000 | 0) + "s" : "STALE";
+  const price = m.priceKey === 1 ? d.currentPrice : d.currentPrice * m.priceKey;
+  return (
+    <tr className="border-b border-hairline/60 transition-colors last:border-0 hover:bg-primary/5">
+      <td className="px-4 py-2.5 font-mono text-xs font-semibold text-foreground">{m.symbol}</td>
+      <td className="px-4 py-2.5 font-mono text-xs tabular-nums text-foreground">{'$' + price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+      <td className={'px-4 py-2.5 font-mono text-xs tabular-nums ' + (m.change24h >= 0 ? 'text-gain' : 'text-loss')}>{m.change24h >= 0 ? '+' : ''}{m.change24h.toFixed(2)}</td>
+      <td className="px-4 py-2.5">
+        <Tag tone={m.trend === "UP" ? "gain" : m.trend === "DOWN" ? "loss" : "default"}>{m.trend}</Tag>
+      </td>
+      <td className="px-4 py-2.5">
+        <Tag tone={feedState === "ONLINE" ? "gain" : feedState === "DEGRADED" ? "warn" : "loss"}>{feedState}</Tag>
+      </td>
+      <td className="px-4 py-2.5 font-mono text-[0.65rem] tabular-nums text-muted-foreground">{ageLabel}</td>
+      <td className="px-4 py-2.5">
+        <FeedDot state={feedState} />
+      </td>
+    </tr>
   );
 }

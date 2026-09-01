@@ -102,5 +102,30 @@ describe("Data Adapter", () => {
       expect(strategies[0]).toHaveProperty("name");
       expect(strategies[0]).toHaveProperty("winRate");
     });
+
+    it("getPaperStatus returns valid structure", () => {
+      const status = mock.getPaperStatus();
+      expect(status.mode).toBe("PAPER");
+      expect(status.noRealTrading).toBe(true);
+      expect(typeof status.capital).toBe("number");
+      expect(typeof status.totalPnl).toBe("number");
+      expect(typeof status.winRate).toBe("number");
+      expect(Array.isArray(status.recentTrades)).toBe(true);
+      expect(Array.isArray(status.feedSymbols)).toBe(true);
+      expect(status.feedSymbols.length).toBeGreaterThan(0);
+      expect(status.feedSymbols[0]).toHaveProperty("symbol");
+      expect(status.feedSymbols[0]).toHaveProperty("feedState");
+      expect(status.feedSymbols[0]).toHaveProperty("dataAgeMs");
+      expect(status.riskEngineStatus).toBe("PAPER");
+      expect(status.emergencyStopState).toBe("ARMED");
+    });
+
+    it("fetchPaperStatus returns valid structure", async () => {
+      const { fetchPaperStatus } = await import("./data-adapter");
+      const data = await fetchPaperStatus();
+      expect(data.mode).toBe("PAPER");
+      expect(data.noRealTrading).toBe(true);
+      expect(Array.isArray(data.feedSymbols)).toBe(true);
+    });
   });
 });

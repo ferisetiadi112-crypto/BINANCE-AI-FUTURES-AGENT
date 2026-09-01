@@ -321,6 +321,86 @@ export type ApiResponse<T> = {
   source: "mock" | "database" | "live";
 };
 
+// ─── Market Feed Status (Phase 8B) ──────────────────────────────────
+
+export type FeedState = "ONLINE" | "DEGRADED" | "STALE" | "OFFLINE";
+
+export type SymbolFeedStatus = {
+  symbol: string;
+  feedState: FeedState;
+  lastUpdate: number; // epoch ms
+  dataAgeMs: number; // ms since last update, Infinity if never
+  candleCount: number;
+  trend: string;
+  price: number;
+  change24h: number;
+};
+
+// ─── Paper Trading Status (Phase 8B) ─────────────────────────────────
+
+export type PaperPositionStatus = {
+  symbol: string;
+  side: "LONG" | "SHORT";
+  size: number;
+  entryPrice: number;
+  markPrice: number;
+  unrealizedPnl: number;
+  unrealizedPnlPercent: number;
+  leverage: number;
+  margin: number;
+  openedAt: string;
+  durationMinutes: number;
+};
+
+export type PaperTradeSummary = {
+  id: string;
+  symbol: string;
+  side: "LONG" | "SHORT";
+  entryPrice: number;
+  exitPrice: number;
+  pnl: number;
+  outcome: "WIN" | "LOSS" | "BREAKEVEN";
+  closedAt: string;
+  strategyName: string;
+};
+
+export type PaperStatusResponse = {
+  // Paper trading mode
+  mode: "PAPER";
+  capital: number;
+  initialCapital: number;
+  totalPnl: number;
+  dailyPnl: number;
+  totalTrades: number;
+  winRate: number;
+  profitFactor: number;
+  maxDrawdown: number;
+
+  // Current position
+  activePosition: PaperPositionStatus | null;
+
+  // Recent trades
+  recentTrades: PaperTradeSummary[];
+
+  // Feed status
+  feedState: FeedState;
+  feedSymbols: SymbolFeedStatus[];
+
+  // Latest AI decision
+  lastAiDecision: {
+    action: string;
+    symbol: string;
+    confidence: number;
+    strategyName: string;
+    timestamp: string;
+  } | null;
+
+  // Safety
+  riskEngineStatus: string;
+  emergencyStopState: string;
+  noRealTrading: true;
+};
+
 // ─── Dashboard Response ──────────────────────────────────────────────
 
 export type DashboardResponse = {

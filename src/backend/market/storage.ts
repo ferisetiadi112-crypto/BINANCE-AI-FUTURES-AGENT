@@ -9,7 +9,7 @@
  */
 
 import { getDatabase } from "../database";
-import { validateKlines, type CandleData } from "./validation";
+import { validateKlines, detectGaps, intervalToMs, type CandleData } from "./validation";
 import { logger } from "../logger";
 
 export type StoredCandle = {
@@ -137,4 +137,76 @@ export function cleanOldCandles(maxAgeDays = 30): number {
   ).run(cutoff);
   logger.info("market-storage", `Cleaned ${result.changes} old candles`);
   return result.changes;
+}
+
+// ─── Multi-Symbol Operations ─────────────────────────────────────────
+
+export type SymbolDataSummary = {
+  symbol: string;
+  candleCount: number;
+  latestCandle: StoredCandle | undefined;
+  oldestCandle: StoredCandle | undefined;
+};
+
+/**
+ * Get data summaries for all stored symbols.
+ */
+export function getAllSymbolSummaries(): SymbolDataSummary[] {
+  const db = getDatabase();
+  const symbols = db
+    .prepare("SELECT DISTINCT symbol FROM market_data ORDER BY symbol")
+    .all() as { symbol: string }[];
+
+  return symbols.map(({ symbol }) => {
+    const candleCount = getCandleCount(symbol);
+    const latestCandle = getLatestCandle(symbol, "15m");
+    const oldestCandle = db
+      .prepare(
+        "SELECT symbol, interval, open_time as openTime, open, high, low, close, volume FROM market_data WHERE symbol = ? AND interval = '15m' ORDER BY open_time ASC LIMIT 1"
+      )
+      .get(symbol) as StoredCandle | undefined;
+
+    return { symbol, candleCount, latestCandle, oldestCandle };
+  });
+}
+
+/**
+ * Store klines for multiple symbols. Returns per-symbol insertion counts.
+ */
+export function storeKlinesBatch(
+  data: Map<string, CandleData[]>,
+  interval: string,
+): Map<string, { inserted: number; gaps: number }> {
+  const results = new Map<string, { inserted: number; gaps: number }>();
+  const intervalMs = intervalToMs(interval);
+
+  for (const [symbol, klines] of data) {
+    const gaps = detectGaps(klines, intervalMs);
+    const inserted = storeKlines(symbol, interval, klines);
+    results.set(symbol, { inserted, gaps: gaps.length });
+  }
+
+  logger.info("market-storage", `Batch stored: ${results.size} symbols`);
+  return results;
+}
+
+/**
+ * Count total candles across all symbols.
+ */
+export function getTotalCandleCount(): number {
+  const result = getDatabase()
+    .prepare("SELECT COUNT(*) as count FROM market_data")
+    .get() as { count: number };
+  return result.count;
+}
+
+/**
+ * Get the most recent candle across all symbols for a given interval.
+ */
+export function getLatestCandleGlobal(interval = "15m"): StoredCandle | undefined {
+  return getDatabase()
+    .prepare(
+      "SELECT symbol, interval, open_time as openTime, open, high, low, close, volume FROM market_data WHERE interval = ? ORDER BY open_time DESC LIMIT 1"
+    )
+    .get(interval) as StoredCandle | undefined;
 }

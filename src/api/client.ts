@@ -21,6 +21,7 @@ import {
   getAudit,
   getSystem,
   getHealth,
+  getPaperStatus,
 } from "../backend/api";
 import type { ApiResponse } from "../types/api";
 
@@ -105,5 +106,12 @@ export async function fetchSystem() {
 
 export async function fetchHealth() {
   const result = await getHealth();
+  return result as ApiResponse<any>;
+}
+
+// ─── Paper Status (Phase 8B) ─────────────────────────────────────────
+
+export async function fetchPaperStatus() {
+  const result = await getPaperStatus();
   return result as ApiResponse<any>;
 }
