@@ -19,7 +19,7 @@
  */
 
 import { BinanceStream, type StreamStatus } from "../exchange/binance-stream";
-import { getEnabledSymbols } from "./symbols";
+import { getEnabledSymbols, getEnabledSymbolsSync } from "./symbols";
 import { logger } from "../logger";
 import type { FeedState, SymbolFeedStatus } from "../../types/api";
 
@@ -129,7 +129,8 @@ export class FeedManager {
   start(): void {
     if (this.started) return;
 
-    const symbols = getEnabledSymbols();
+    // Use cached sync version since start() is called from constructor
+    const symbols = getEnabledSymbolsSync();
     if (symbols.length === 0) {
       logger.warn("feed-manager", "No enabled symbols — feed not started");
       return;
@@ -570,4 +571,5 @@ export function resetFeedManager(): void {
 
 export {
   getEnabledSymbols,
+  getEnabledSymbolsSync,
 };

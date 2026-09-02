@@ -1,4 +1,4 @@
-import { getDatabase } from "../database";
+import { dbQueryOne, dbQuery } from "../database/adapter";
 
 export type TradeRecord = {
   id: string;
@@ -19,48 +19,53 @@ export type TradeRecord = {
 };
 
 export const tradeRepository = {
-  getById(id: string): TradeRecord | undefined {
-    return getDatabase()
-      .prepare("SELECT * FROM trades WHERE id = ?")
-      .get(id) as TradeRecord | undefined;
+  async getById(id: string): Promise<TradeRecord | undefined> {
+    const row = await dbQueryOne("SELECT * FROM trades WHERE id = $1", [id]);
+    return row as TradeRecord | undefined;
   },
 
-  getRecent(limit = 10): TradeRecord[] {
-    return getDatabase()
-      .prepare("SELECT * FROM trades ORDER BY closed_at DESC LIMIT ?")
-      .all(limit) as TradeRecord[];
+  async getRecent(limit = 10): Promise<TradeRecord[]> {
+    const rows = await dbQuery(
+      "SELECT * FROM trades ORDER BY closed_at DESC LIMIT $1",
+      [limit]
+    );
+    return rows as unknown as TradeRecord[];
   },
 
-  getByAccount(accountId: string, limit = 50): TradeRecord[] {
-    return getDatabase()
-      .prepare("SELECT * FROM trades WHERE account_id = ? ORDER BY closed_at DESC LIMIT ?")
-      .all(accountId, limit) as TradeRecord[];
+  async getByAccount(accountId: string, limit = 50): Promise<TradeRecord[]> {
+    const rows = await dbQuery(
+      "SELECT * FROM trades WHERE account_id = $1 ORDER BY closed_at DESC LIMIT $2",
+      [accountId, limit]
+    );
+    return rows as unknown as TradeRecord[];
   },
 
-  getByStrategy(strategyName: string): TradeRecord[] {
-    return getDatabase()
-      .prepare("SELECT * FROM trades WHERE strategy_name = ? ORDER BY closed_at DESC")
-      .all(strategyName) as TradeRecord[];
+  async getByStrategy(strategyName: string): Promise<TradeRecord[]> {
+    const rows = await dbQuery(
+      "SELECT * FROM trades WHERE strategy_name = $1 ORDER BY closed_at DESC",
+      [strategyName]
+    );
+    return rows as unknown as TradeRecord[];
   },
 
-  getStats(): { totalTrades: number; winRate: number; totalPnl: number } {
-    const db = getDatabase();
-    const stats = db.prepare(`
+  async getStats(): Promise<{ totalTrades: number; winRate: number; totalPnl: number }> {
+    const stats = await dbQueryOne(`
       SELECT
-        COUNT(*) as totalTrades,
-        SUM(CASE WHEN pnl >= 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as winRate,
-        SUM(pnl) as totalPnl
+        COUNT(*) as "totalTrades",
+        SUM(CASE WHEN pnl >= 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as "winRate",
+        SUM(pnl) as "totalPnl"
       FROM trades
-    `).get() as { totalTrades: number; winRate: number; totalPnl: number };
+    `) as { totalTrades: number; winRate: number; totalPnl: number } | undefined;
+
     return {
-      totalTrades: stats.totalTrades || 0,
-      winRate: Math.round((stats.winRate || 0) * 10) / 10,
-      totalPnl: Math.round((stats.totalPnl || 0) * 100) / 100,
+      totalTrades: Number(stats?.totalTrades || 0),
+      winRate: Math.round(Number(stats?.winRate || 0) * 10) / 10,
+      totalPnl: Math.round(Number(stats?.totalPnl || 0) * 100) / 100,
     };
   },
 
-  count(): number {
-    const result = getDatabase().prepare("SELECT COUNT(*) as count FROM trades").get() as { count: number };
-    return result.count;
+  async count(): Promise<number> {
+    const result = await dbQueryOne("SELECT COUNT(*) as count FROM trades") as { count: number } | undefined;
+    return Number(result?.count ?? 0);
   },
 };

@@ -44,10 +44,10 @@ describe("Trading Orchestrator", () => {
   let walletSpy: ReturnType<typeof vi.spyOn>;
   let guardrailSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Mock wallet repository so orchestrator doesn't need a real database
-    walletSpy = vi.spyOn(walletRepo.walletRepository, "getBalance").mockReturnValue(5.0);
-    guardrailSpy = vi.spyOn(walletRepo.walletRepository, "logGuardrailEvent").mockImplementation(() => {});
+    walletSpy = vi.spyOn(walletRepo.walletRepository, "getBalance").mockResolvedValue(5.0);
+    guardrailSpy = vi.spyOn(walletRepo.walletRepository, "logGuardrailEvent").mockResolvedValue(undefined);
     orchestrator = new TradingOrchestrator();
     orchestrator.start();
   });
@@ -58,50 +58,44 @@ describe("Trading Orchestrator", () => {
   });
 
   describe("processMarketUpdate", () => {
-    it("processes market update and returns decision", () => {
-      const result = orchestrator.processMarketUpdate(trendingUpState);
+    it("processes market update and returns decision", async () => {
+      const result = await orchestrator.processMarketUpdate(trendingUpState);
       expect(result.decision).toBeDefined();
       expect(result.riskResult).toBeDefined();
       expect(result.decision.symbol).toBe("BTCUSDT");
     });
 
-    it("AI cannot bypass risk engine", () => {
-      const result = orchestrator.processMarketUpdate(trendingUpState);
-      // Risk result must exist
+    it("AI cannot bypass risk engine", async () => {
+      const result = await orchestrator.processMarketUpdate(trendingUpState);
       expect(result.riskResult).toBeDefined();
       expect(typeof result.riskResult.approved).toBe("boolean");
     });
 
-    it("records decision history", () => {
-      orchestrator.processMarketUpdate(trendingUpState);
-      orchestrator.processMarketUpdate(trendingUpState);
+    it("records decision history", async () => {
+      await orchestrator.processMarketUpdate(trendingUpState);
+      await orchestrator.processMarketUpdate(trendingUpState);
       const history = orchestrator.getDecisionHistory();
       expect(history.length).toBe(2);
     });
 
-    it("updates state after processing", () => {
-      orchestrator.processMarketUpdate(trendingUpState);
+    it("updates state after processing", async () => {
+      await orchestrator.processMarketUpdate(trendingUpState);
       const state = orchestrator.getState();
       expect(state.marketState).toBeDefined();
       expect(state.lastDecision).toBeDefined();
       expect(state.systemStatus).toBe("RUNNING");
     });
 
-    it("AI produces NO_TRADE for stale market data (safe default)", () => {
-      const result = orchestrator.processMarketUpdate(uncertainState);
-      // AI correctly outputs NO_TRADE when data is stale; risk approves NO_TRADE
-      // because no trade action is being taken — this is the safe behavior
+    it("AI produces NO_TRADE for stale market data (safe default)", async () => {
+      const result = await orchestrator.processMarketUpdate(uncertainState);
       expect(result.decision.direction).toBe("NO_TRADE");
       expect(result.riskResult.approved).toBe(true);
       expect(result.trade).toBeNull();
     });
 
-    it("risk engine rejects actual trade with stale data", () => {
-      // Force a LONG decision on stale data to verify risk catches it
+    it("risk engine rejects actual trade with stale data", async () => {
       const staleLongDecision = { ...trendingUpState, dataQuality: "STALE" as const, feedStatus: "STALE" as const };
-      const result = orchestrator.processMarketUpdate(staleLongDecision);
-      // Even if AI decides LONG, risk engine should reject based on data quality
-      // unless the signal is strong enough to override
+      const result = await orchestrator.processMarketUpdate(staleLongDecision);
       expect(result.riskResult).toBeDefined();
       expect(typeof result.riskResult.approved).toBe("boolean");
     });
@@ -150,52 +144,45 @@ describe("Trading Orchestrator", () => {
       spy?.mockRestore();
     });
 
-    it("processRealtimeUpdate calls generateRealtimeMarketState and forwards to processMarketUpdate", () => {
+    it("processRealtimeUpdate calls generateRealtimeMarketState and forwards to processMarketUpdate", async () => {
       spy = vi.spyOn(dataAdapter, "generateRealtimeMarketState").mockReturnValue(trendingUpState);
 
-      const results = orchestrator.processRealtimeUpdate();
+      const results = await orchestrator.processRealtimeUpdate();
 
-      // Should have been called for each enabled symbol
       expect(spy).toHaveBeenCalled();
       expect(results.length).toBeGreaterThan(0);
 
-      // At least one symbol should have succeeded (the one we mocked)
       const okResults = results.filter(r => r.reason === "OK");
       expect(okResults.length).toBeGreaterThan(0);
 
-      // The result should contain a valid decision from processMarketUpdate
       const firstOk = okResults[0]!;
       expect(firstOk.result).not.toBeNull();
       expect(firstOk.result!.decision).toBeDefined();
       expect(firstOk.result!.riskResult).toBeDefined();
     });
 
-    it("OFFLINE/STALE data from generateRealtimeMarketState is rejected (null → skip)", () => {
+    it("OFFLINE/STALE data from generateRealtimeMarketState is rejected (null → skip)", async () => {
       spy = vi.spyOn(dataAdapter, "generateRealtimeMarketState").mockReturnValue(null);
 
-      const results = orchestrator.processRealtimeUpdate();
+      const results = await orchestrator.processRealtimeUpdate();
 
       expect(spy).toHaveBeenCalled();
       expect(results.length).toBeGreaterThan(0);
 
-      // All symbols should be skipped — no AI decision generated
       const skipped = results.filter(r => r.reason === "OFFLINE/STALE/insufficient_data");
       expect(skipped.length).toBe(results.length);
 
-      // No decisions should have been created
       const decisionHistory = orchestrator.getDecisionHistory();
       expect(decisionHistory.length).toBe(0);
     });
 
-    it("realtime MarketState contains actual feed data, not mock data", () => {
+    it("realtime MarketState contains actual feed data, not mock data", async () => {
       spy = vi.spyOn(dataAdapter, "generateRealtimeMarketState").mockReturnValue(trendingUpState);
 
-      orchestrator.processRealtimeUpdate();
+      await orchestrator.processRealtimeUpdate();
 
-      // Verify the mock was called with a symbol string
       expect(spy).toHaveBeenCalledWith(expect.any(String));
 
-      // Verify the market state passed through contains the expected price
       const decisionHistory = orchestrator.getDecisionHistory();
       if (decisionHistory.length > 0) {
         expect(decisionHistory[0]!.symbol).toBe("BTCUSDT");
@@ -218,14 +205,14 @@ describe("Trading Orchestrator", () => {
       expect(state!.symbol).toBe("BTCUSDT");
     });
 
-    it("processRealtimeUpdate returns per-symbol isolation", () => {
+    it("processRealtimeUpdate returns per-symbol isolation", async () => {
       let callCount = 0;
       spy = vi.spyOn(dataAdapter, "generateRealtimeMarketState").mockImplementation(() => {
         callCount++;
         return callCount === 1 ? trendingUpState : null;
       });
 
-      const results = orchestrator.processRealtimeUpdate();
+      const results = await orchestrator.processRealtimeUpdate();
 
       const okResults = results.filter(r => r.reason === "OK");
       const skippedResults = results.filter(r => r.reason === "OFFLINE/STALE/insufficient_data");
@@ -242,53 +229,47 @@ describe("Trading Orchestrator", () => {
       spy?.mockRestore();
     });
 
-    it("valid MarketState flows through full pipeline", () => {
-      const result = orchestrator.processMarketUpdate(trendingUpState);
-      // Full pipeline produces all three outputs
+    it("valid MarketState flows through full pipeline", async () => {
+      const result = await orchestrator.processMarketUpdate(trendingUpState);
       expect(result.decision).toBeDefined();
       expect(result.riskResult).toBeDefined();
       expect(typeof result.riskResult.approved).toBe("boolean");
-      // decision must contain standard fields
       expect(result.decision.symbol).toBe("BTCUSDT");
       expect(result.decision.direction).toBeDefined();
       expect(result.decision.strategy).toBeDefined();
     });
 
-    it("Risk Engine rejection blocks Paper Trading execution", () => {
-      // Place engine in locked state via daily loss
+    it("Risk Engine rejection blocks Paper Trading execution", async () => {
       orchestrator.getRiskEngine().updateDailyPnl(-0.55);
       expect(orchestrator.getRiskEngine().isSystemLocked()).toBe(true);
 
-      const result = orchestrator.processMarketUpdate(trendingUpState);
+      const result = await orchestrator.processMarketUpdate(trendingUpState);
       expect(result.riskResult.approved).toBe(false);
       expect(result.trade).toBeNull();
     });
 
-    it("NO_TRADE decision does not trigger Paper Trading execution", () => {
-      const result = orchestrator.processMarketUpdate(uncertainState);
-      // AI should produce NO_TRADE for uncertain stale-like data
+    it("NO_TRADE decision does not trigger Paper Trading execution", async () => {
+      const result = await orchestrator.processMarketUpdate(uncertainState);
       expect(result.decision.direction).toBe("NO_TRADE");
       expect(result.trade).toBeNull();
     });
 
-    it("decision result tracks riskResult field on the decision object", () => {
-      const result = orchestrator.processMarketUpdate(trendingUpState);
-      // Risk result is recorded on the decision itself
+    it("decision result tracks riskResult field on the decision object", async () => {
+      const result = await orchestrator.processMarketUpdate(trendingUpState);
       expect(result.decision.riskResult).toBeDefined();
       expect(["APPROVED", "REJECTED"]).toContain(result.decision.riskResult!);
     });
 
-    it("multiple consecutive processMarketUpdate calls work deterministically", () => {
-      const r1 = orchestrator.processMarketUpdate(trendingUpState);
-      const r2 = orchestrator.processMarketUpdate(trendingUpState);
+    it("multiple consecutive processMarketUpdate calls work deterministically", async () => {
+      const r1 = await orchestrator.processMarketUpdate(trendingUpState);
+      const r2 = await orchestrator.processMarketUpdate(trendingUpState);
       const history = orchestrator.getDecisionHistory();
       expect(history.length).toBeGreaterThanOrEqual(2);
-      // Both should produce decisions (may differ due to duplicate detection)
       expect(r1.decision).toBeDefined();
       expect(r2.decision).toBeDefined();
     });
 
-    it("error in one symbol does not stop other symbols in processRealtimeUpdate", () => {
+    it("error in one symbol does not stop other symbols in processRealtimeUpdate", async () => {
       let callCount = 0;
       spy = vi.spyOn(dataAdapter, "generateRealtimeMarketState").mockImplementation(() => {
         callCount++;
@@ -297,7 +278,7 @@ describe("Trading Orchestrator", () => {
         return null;
       });
 
-      const results = orchestrator.processRealtimeUpdate();
+      const results = await orchestrator.processRealtimeUpdate();
       const errored = results.filter(r => r.reason === "ERROR");
       const ok = results.filter(r => r.reason === "OK");
 
@@ -305,8 +286,8 @@ describe("Trading Orchestrator", () => {
       expect(ok.length).toBe(1);
     });
 
-    it("Paper Engine remains in paper-only mode after full cycle", () => {
-      orchestrator.processMarketUpdate(trendingUpState);
+    it("Paper Engine remains in paper-only mode after full cycle", async () => {
+      await orchestrator.processMarketUpdate(trendingUpState);
       const stats = orchestrator.getPaperStats();
       expect(stats).toBeDefined();
       expect(typeof stats.capital).toBe("number");

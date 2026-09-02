@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-const mockProcessRealtimeUpdate = vi.fn().mockReturnValue([]);
+const mockProcessRealtimeUpdate = vi.fn().mockResolvedValue([]);
 const MockOrchestratorConstructor = vi.fn().mockImplementation(() => ({
   processRealtimeUpdate: mockProcessRealtimeUpdate,
   processMarketUpdate: vi.fn(),
@@ -57,132 +57,132 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     vi.useRealTimers();
   });
 
-  it("startTradingRuntime creates a TradingOrchestrator instance", () => {
-    const orch = startTradingRuntime();
+  it("startTradingRuntime creates a TradingOrchestrator instance", async () => {
+    const orch = await startTradingRuntime();
     expect(orch).toBeDefined();
     expect(getOrchestrator()).toBe(orch);
   });
 
-  it("returns the same instance on repeated calls (singleton)", () => {
-    const orch1 = startTradingRuntime();
-    const orch2 = startTradingRuntime();
-    const orch3 = startTradingRuntime();
+  it("returns the same instance on repeated calls (singleton)", async () => {
+    const orch1 = await startTradingRuntime();
+    const orch2 = await startTradingRuntime();
+    const orch3 = await startTradingRuntime();
     expect(orch1).toBe(orch2);
     expect(orch2).toBe(orch3);
     expect(MockOrchestratorConstructor).toHaveBeenCalledTimes(1);
   });
 
-  it("isRuntimeRunning returns true after start", () => {
+  it("isRuntimeRunning returns true after start", async () => {
     expect(isRuntimeRunning()).toBe(false);
-    startTradingRuntime();
+    await startTradingRuntime();
     expect(isRuntimeRunning()).toBe(true);
   });
 
-  it("isRuntimeRunning returns false after stop", () => {
-    startTradingRuntime();
+  it("isRuntimeRunning returns false after stop", async () => {
+    await startTradingRuntime();
     stopTradingRuntime();
     expect(isRuntimeRunning()).toBe(false);
   });
 
-  it("getOrchestrator returns null before start", () => {
+  it("getOrchestrator returns null before start", async () => {
     expect(getOrchestrator()).toBeNull();
   });
 
-  it("runtime loop calls processRealtimeUpdate on tick", () => {
-    startTradingRuntime();
+  it("runtime loop calls processRealtimeUpdate on tick", async () => {
+    await startTradingRuntime();
     expect(mockProcessRealtimeUpdate).toHaveBeenCalledTimes(1);
 
-    vi.advanceTimersByTime(getTickIntervalMs());
+    await vi.advanceTimersByTimeAsync(getTickIntervalMs());
     expect(mockProcessRealtimeUpdate).toHaveBeenCalledTimes(2);
 
-    vi.advanceTimersByTime(getTickIntervalMs());
+    await vi.advanceTimersByTimeAsync(getTickIntervalMs());
     expect(mockProcessRealtimeUpdate).toHaveBeenCalledTimes(3);
   });
 
-  it("no duplicate intervals on repeated start", () => {
-    startTradingRuntime();
-    startTradingRuntime();
+  it("no duplicate intervals on repeated start", async () => {
+    await startTradingRuntime();
+    await startTradingRuntime();
 
-    vi.advanceTimersByTime(getTickIntervalMs() * 3);
+    await vi.advanceTimersByTimeAsync(getTickIntervalMs() * 3);
     expect(mockProcessRealtimeUpdate).toHaveBeenCalledTimes(4);
   });
 
-  it("stop clears the interval", () => {
-    startTradingRuntime();
+  it("stop clears the interval", async () => {
+    await startTradingRuntime();
     expect(mockProcessRealtimeUpdate).toHaveBeenCalledTimes(1);
     stopTradingRuntime();
 
-    vi.advanceTimersByTime(getTickIntervalMs() * 5);
+    await vi.advanceTimersByTimeAsync(getTickIntervalMs() * 5);
     expect(mockProcessRealtimeUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it("start after stop creates new interval", () => {
-    startTradingRuntime();
+  it("start after stop creates new interval", async () => {
+    await startTradingRuntime();
     stopTradingRuntime();
-    vi.advanceTimersByTime(getTickIntervalMs() * 2);
+    await vi.advanceTimersByTimeAsync(getTickIntervalMs() * 2);
     const callsAfterStop = mockProcessRealtimeUpdate.mock.calls.length;
 
-    startTradingRuntime();
+    await startTradingRuntime();
     expect(mockProcessRealtimeUpdate.mock.calls.length).toBe(callsAfterStop + 1);
 
-    vi.advanceTimersByTime(getTickIntervalMs());
+    await vi.advanceTimersByTimeAsync(getTickIntervalMs());
     expect(mockProcessRealtimeUpdate.mock.calls.length).toBe(callsAfterStop + 2);
   });
 
-  it("tick processes symbols via processRealtimeUpdate", () => {
+  it("tick processes symbols via processRealtimeUpdate", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: {}, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
       { symbol: "ETHUSDT", result: null, reason: "OFFLINE/STALE/insufficient_data" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     expect(mockProcessRealtimeUpdate).toHaveBeenCalledTimes(1);
     const orch = getOrchestrator() as any;
     expect(orch.processRealtimeUpdate).toHaveBeenCalled();
   });
 
-  it("tick handles errors gracefully without crashing runtime", () => {
+  it("tick handles errors gracefully without crashing runtime", async () => {
     mockProcessRealtimeUpdate.mockImplementationOnce(() => {
       throw new Error("Test error");
     });
 
-    startTradingRuntime();
+    await startTradingRuntime();
     expect(isRuntimeRunning()).toBe(true);
 
-    vi.advanceTimersByTime(getTickIntervalMs());
+    await vi.advanceTimersByTimeAsync(getTickIntervalMs());
     expect(mockProcessRealtimeUpdate).toHaveBeenCalledTimes(2);
   });
 
-  it("OFFLINE symbols have null result", () => {
+  it("OFFLINE symbols have null result", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: null, reason: "OFFLINE/STALE/insufficient_data" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const results = mockProcessRealtimeUpdate.mock.results[0]!.value as any[];
     expect(results[0].reason).toBe("OFFLINE/STALE/insufficient_data");
     expect(results[0].result).toBeNull();
   });
 
-  it("STALE symbols have null result", () => {
+  it("STALE symbols have null result", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "ETHUSDT", result: null, reason: "OFFLINE/STALE/insufficient_data" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const results = mockProcessRealtimeUpdate.mock.results[0]!.value as any[];
     expect(results[0].reason).toBe("OFFLINE/STALE/insufficient_data");
     expect(results[0].result).toBeNull();
   });
 
-  it("mixed ONLINE and OFFLINE results handled correctly", () => {
+  it("mixed ONLINE and OFFLINE results handled correctly", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: {}, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
       { symbol: "ETHUSDT", result: null, reason: "OFFLINE/STALE/insufficient_data" },
       { symbol: "SOLUSDT", result: { decision: {}, riskResult: { approved: false, reason: "RISK" }, trade: null }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const results = mockProcessRealtimeUpdate.mock.results[0]!.value as any[];
     expect(results).toHaveLength(3);
     expect(results[0].reason).toBe("OK");
@@ -190,7 +190,7 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(results[2].reason).toBe("OK");
   });
 
-  it("12 symbols can be processed independently", () => {
+  it("12 symbols can be processed independently", async () => {
     const symbols = [
       "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
       "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT",
@@ -205,19 +205,19 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
       })),
     );
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const results = mockProcessRealtimeUpdate.mock.results[0]!.value as any[];
     expect(results).toHaveLength(12);
     expect(results.map((r: any) => r.symbol)).toEqual(symbols);
   });
 
-  it("no duplicate constructor calls (singleton)", () => {
-    startTradingRuntime();
+  it("no duplicate constructor calls (singleton)", async () => {
+    await startTradingRuntime();
     expect(MockOrchestratorConstructor).toHaveBeenCalledTimes(1);
   });
 
-  it("resetRuntime stops and clears everything", () => {
-    startTradingRuntime();
+  it("resetRuntime stops and clears everything", async () => {
+    await startTradingRuntime();
     expect(isRuntimeRunning()).toBe(true);
 
     resetRuntime();
@@ -225,14 +225,14 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(getOrchestrator()).toBeNull();
   });
 
-  it("getTickIntervalMs returns 15 seconds", () => {
+  it("getTickIntervalMs returns 15 seconds", async () => {
     expect(getTickIntervalMs()).toBe(15_000);
   });
 
   // ─── Phase 8H: Runtime Observability Tests ──────────────────
 
-  it("getRuntimeSnapshot returns runtime state", () => {
-    startTradingRuntime();
+  it("getRuntimeSnapshot returns runtime state", async () => {
+    await startTradingRuntime();
     const snap = getRuntimeSnapshot();
     expect(snap.running).toBe(true);
     expect(snap.tickIntervalMs).toBe(15_000);
@@ -245,14 +245,14 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(snap.eventBufferLimit).toBe(100);
   });
 
-  it("per-symbol stats are isolated per symbol", () => {
+  it("per-symbol stats are isolated per symbol", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND_FOLLOWING" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
       { symbol: "ETHUSDT", result: null, reason: "OFFLINE/STALE/insufficient_data" },
       { symbol: "SOLUSDT", result: { decision: { direction: "NO_TRADE", confidence: 0.3, strategy: "MOMENTUM" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const perSymbol = getPerSymbolStats();
 
     const btc = perSymbol.find(p => p.symbol === "BTCUSDT");
@@ -272,13 +272,13 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(sol!.noTrade).toBe(1);
   });
 
-  it("runtime events are recorded for each symbol", () => {
+  it("runtime events are recorded for each symbol", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND_FOLLOWING" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
       { symbol: "ETHUSDT", result: null, reason: "OFFLINE/STALE/insufficient_data" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const events = getRuntimeEvents();
     expect(events.length).toBe(2);
 
@@ -298,32 +298,32 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(ethEvent!.decision).toBeNull();
   });
 
-  it("event buffer is bounded at 100", () => {
+  it("event buffer is bounded at 100", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "NO_TRADE", confidence: 0.3, strategy: "MOMENTUM" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
 
     // Run 150 ticks to exceed buffer
     for (let i = 0; i < 149; i++) {
-      vi.advanceTimersByTime(getTickIntervalMs());
+      await vi.advanceTimersByTimeAsync(getTickIntervalMs());
     }
 
     const events = getRuntimeEvents();
     expect(events.length).toBeLessThanOrEqual(100);
   });
 
-  it("newest events are retained when buffer is full", () => {
+  it("newest events are retained when buffer is full", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "NO_TRADE", confidence: 0.3, strategy: "MOMENTUM" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
 
     // Run enough ticks to fill and overflow buffer
     for (let i = 0; i < 105; i++) {
-      vi.advanceTimersByTime(getTickIntervalMs());
+      await vi.advanceTimersByTimeAsync(getTickIntervalMs());
     }
 
     const events = getRuntimeEvents();
@@ -333,12 +333,12 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(events.every(e => e.tickNumber > 0)).toBe(true);
   });
 
-  it("risk rejection is tracked in events", () => {
+  it("risk rejection is tracked in events", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND_FOLLOWING" }, riskResult: { approved: false, reason: "Daily loss limit reached" }, trade: null }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const events = getRuntimeEvents();
     const btcEvent = events.find(e => e.symbol === "BTCUSDT");
 
@@ -348,12 +348,12 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(btcEvent!.executionResult).toBe("REJECTED");
   });
 
-  it("paper execution is tracked in events", () => {
+  it("paper execution is tracked in events", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND_FOLLOWING" }, riskResult: { approved: true, reason: "OK" }, trade: { id: "PAPER-TRD-001" } }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const events = getRuntimeEvents();
     const btcEvent = events.find(e => e.symbol === "BTCUSDT");
 
@@ -362,13 +362,13 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(btcEvent!.paperTradeId).toBe("PAPER-TRD-001");
   });
 
-  it("error events are recorded for failed symbols", () => {
+  it("error events are recorded for failed symbols", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: null, reason: "ERROR" },
       { symbol: "ETHUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND_FOLLOWING" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const events = getRuntimeEvents();
     const btcEvent = events.find(e => e.symbol === "BTCUSDT");
     const ethEvent = events.find(e => e.symbol === "ETHUSDT");
@@ -382,8 +382,8 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(ethEvent!.error).toBeNull();
   });
 
-  it("runtime snapshot is read-only (returns copies)", () => {
-    startTradingRuntime();
+  it("runtime snapshot is read-only (returns copies)", async () => {
+    await startTradingRuntime();
     const snap1 = getRuntimeSnapshot();
     const snap2 = getRuntimeSnapshot();
     expect(snap1).not.toBe(snap2);
@@ -392,12 +392,12 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(snap1.recentEvents).not.toBe(snap2.recentEvents);
   });
 
-  it("resetRuntime clears per-symbol stats and events", () => {
+  it("resetRuntime clears per-symbol stats and events", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND_FOLLOWING" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     expect(getRuntimeEvents().length).toBe(1);
     expect(getPerSymbolStats().length).toBe(1);
 
@@ -408,7 +408,7 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
 
   // ─── Phase 8I: Observability Hardening Tests ─────────────────
 
-  it("global stats track correctly across multiple symbols in one tick", () => {
+  it("global stats track correctly across multiple symbols in one tick", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: true, reason: "OK" }, trade: { id: "PAPER-001" } }, reason: "OK" },
       { symbol: "ETHUSDT", result: { decision: { direction: "NO_TRADE", confidence: 0.3, strategy: "MOMENTUM" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
@@ -417,7 +417,7 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
       { symbol: "XRPUSDT", result: null, reason: "ERROR" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const stats = getRuntimeStats();
 
     expect(stats.tickCount).toBe(1);
@@ -430,36 +430,36 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(stats.totalPaperExecutions).toBe(1); // BTC
   });
 
-  it("NO_TRADE is not counted as paper execution", () => {
+  it("NO_TRADE is not counted as paper execution", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "NO_TRADE", confidence: 0.2, strategy: "MOMENTUM" }, riskResult: { approved: true, reason: "NO_TRADE" }, trade: null }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const stats = getRuntimeStats();
     expect(stats.totalNoTrade).toBe(1);
     expect(stats.totalPaperExecutions).toBe(0);
     expect(stats.totalRiskRejected).toBe(0);
   });
 
-  it("risk rejection is not counted as paper execution", () => {
+  it("risk rejection is not counted as paper execution", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: false, reason: "Daily loss limit" }, trade: null }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const stats = getRuntimeStats();
     expect(stats.totalRiskRejected).toBe(1);
     expect(stats.totalPaperExecutions).toBe(0);
     expect(stats.totalNoTrade).toBe(0);
   });
 
-  it("paper execution increments exactly once per trade", () => {
+  it("paper execution increments exactly once per trade", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: true, reason: "OK" }, trade: { id: "PAPER-001" } }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const stats = getRuntimeStats();
     expect(stats.totalPaperExecutions).toBe(1);
     expect(stats.totalDecisions).toBe(1);
@@ -467,12 +467,12 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(stats.totalRiskRejected).toBe(0);
   });
 
-  it("returned events cannot mutate internal buffer", () => {
+  it("returned events cannot mutate internal buffer", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
 
     const events = getRuntimeEvents();
     events[0]!.symbol = "MUTATED";
@@ -481,12 +481,12 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(freshEvents[0]!.symbol).toBe("BTCUSDT");
   });
 
-  it("runtime snapshot recentEvents cannot mutate internal buffer", () => {
+  it("runtime snapshot recentEvents cannot mutate internal buffer", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
 
     const snap = getRuntimeSnapshot();
     snap.recentEvents[0]!.symbol = "MUTATED";
@@ -495,14 +495,14 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(freshSnap.recentEvents[0]!.symbol).toBe("BTCUSDT");
   });
 
-  it("error in one symbol does not affect stats of other symbols", () => {
+  it("error in one symbol does not affect stats of other symbols", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: null, reason: "ERROR" },
       { symbol: "ETHUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
       { symbol: "SOLUSDT", result: null, reason: "OFFLINE/STALE/insufficient_data" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
 
     const perSymbol = getPerSymbolStats();
     const btc = perSymbol.find(p => p.symbol === "BTCUSDT")!;
@@ -520,7 +520,7 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(sol!.errors).toBe(0);
   });
 
-  it("runtime observability does not alter trading decision data", () => {
+  it("runtime observability does not alter trading decision data", async () => {
     const decisionData = { direction: "LONG", confidence: 0.85, strategy: "TREND_FOLLOWING" };
     const riskData = { approved: true, reason: "All risk checks passed" };
     const tradeData = { id: "PAPER-001", pnl: 0.15 };
@@ -529,7 +529,7 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
       { symbol: "BTCUSDT", result: { decision: decisionData, riskResult: riskData, trade: tradeData }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
 
     // The mock's returned values must be unchanged by observability processing
     const results = mockProcessRealtimeUpdate.mock.results[0]!.value as any[];
@@ -538,12 +538,12 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(results[0]!.result.trade.id).toBe("PAPER-001");
   });
 
-  it("paper execution event contains paper trade ID and experienceRecorded", () => {
+  it("paper execution event contains paper trade ID and experienceRecorded", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: true, reason: "OK" }, trade: { id: "PAPER-TRD-42" } }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const events = getRuntimeEvents();
     const btcEvent = events.find(e => e.symbol === "BTCUSDT");
     expect(btcEvent!.paperTradeId).toBe("PAPER-TRD-42");
@@ -551,18 +551,18 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     expect(btcEvent!.experienceRecorded).toBe(true);
   });
 
-  it("multiple ticks accumulate stats correctly", () => {
+  it("multiple ticks accumulate stats correctly", async () => {
     mockProcessRealtimeUpdate.mockReturnValue([
       { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: true, reason: "OK" }, trade: { id: "PAPER-001" } }, reason: "OK" },
     ]);
 
-    startTradingRuntime();
+    await startTradingRuntime();
     const stats1 = getRuntimeStats();
     expect(stats1.totalProcessed).toBe(1);
     expect(stats1.totalPaperExecutions).toBe(1);
     expect(stats1.tickCount).toBe(1);
 
-    vi.advanceTimersByTime(getTickIntervalMs());
+    await vi.advanceTimersByTimeAsync(getTickIntervalMs());
     const stats2 = getRuntimeStats();
     expect(stats2.totalProcessed).toBe(2);
     expect(stats2.totalPaperExecutions).toBe(2);

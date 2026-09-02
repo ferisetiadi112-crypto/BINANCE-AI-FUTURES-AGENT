@@ -14,11 +14,13 @@
  * Key Principle:
  *   AI must learn from evidence, not just from trade count.
  *   Every lesson must be grounded in actual experience data.
+ *
+ * Database: Async via PostgreSQL adapter (dbQuery/dbExecute).
  */
 
 import type { TradeExperience, TradeOutcome } from "./experience-engine";
 import { getRecentExperiences, getExperienceStats } from "./experience-engine";
-import { getDatabase } from "../database";
+import { dbQuery, dbQueryOne, dbExecute } from "../database";
 import { logger } from "../logger";
 
 // ─── Lesson Types ───────────────────────────────────────────────────
@@ -37,8 +39,8 @@ export type Lesson = {
   text: string;
   cycle: number;
   category: LessonCategory;
-  confidence: number; // 0-1, how confident we are in this lesson
-  evidenceCount: number; // Number of experiences supporting this lesson
+  confidence: number;
+  evidenceCount: number;
   sourceExperienceIds: string[];
   createdAt: string;
 };
@@ -47,13 +49,12 @@ export type Lesson = {
 
 let lessonCycle = 0;
 
-export function deriveLessons(
+export async function deriveLessons(
   recentExperiences: TradeExperience[],
   minExperiences: number = 5,
-): Lesson[] {
+): Promise<Lesson[]> {
   const lessons: Lesson[] = [];
 
-  // Need minimum experiences to derive meaningful lessons
   if (recentExperiences.length < minExperiences) {
     logger.info(
       "lesson-engine",
@@ -86,7 +87,7 @@ export function deriveLessons(
 
   // Persist lessons
   for (const lesson of lessons) {
-    persistLesson(lesson);
+    await persistLesson(lesson);
   }
 
   logger.info(
@@ -102,7 +103,6 @@ export function deriveLessons(
 function deriveRegimeLessons(experiences: TradeExperience[]): Lesson[] {
   const lessons: Lesson[] = [];
 
-  // Group by regime
   const byRegime = new Map<string, TradeExperience[]>();
   for (const exp of experiences) {
     const regime = exp.marketRegime;
@@ -112,15 +112,12 @@ function deriveRegimeLessons(experiences: TradeExperience[]): Lesson[] {
     byRegime.get(regime)!.push(exp);
   }
 
-  // Analyze each regime
   for (const [regime, regimeExps] of byRegime) {
-    if (regimeExps.length < 3) continue; // Need minimum data
+    if (regimeExps.length < 3) continue;
 
     const wins = regimeExps.filter(e => e.outcome === "WIN").length;
     const winRate = (wins / regimeExps.length) * 100;
-    const totalPnl = regimeExps.reduce((sum, e) => sum + (e.netPnl || 0), 0);
 
-    // Only generate lesson if there's a clear pattern
     if (winRate >= 70) {
       lessons.push({
         id: `LESSON-${Date.now()}-${lessonCycle}-REGIME-${regime}`,
@@ -154,7 +151,6 @@ function deriveRegimeLessons(experiences: TradeExperience[]): Lesson[] {
 function deriveStrategyLessons(experiences: TradeExperience[]): Lesson[] {
   const lessons: Lesson[] = [];
 
-  // Group by strategy
   const byStrategy = new Map<string, TradeExperience[]>();
   for (const exp of experiences) {
     const strategy = exp.strategy;
@@ -164,7 +160,6 @@ function deriveStrategyLessons(experiences: TradeExperience[]): Lesson[] {
     byStrategy.get(strategy)!.push(exp);
   }
 
-  // Analyze each strategy
   for (const [strategy, strategyExps] of byStrategy) {
     if (strategyExps.length < 3) continue;
 
@@ -172,7 +167,6 @@ function deriveStrategyLessons(experiences: TradeExperience[]): Lesson[] {
     const winRate = (wins / strategyExps.length) * 100;
     const totalPnl = strategyExps.reduce((sum, e) => sum + (e.netPnl || 0), 0);
 
-    // High-performing strategy
     if (winRate >= 65 && totalPnl > 0) {
       lessons.push({
         id: `LESSON-${Date.now()}-${lessonCycle}-STRAT-${strategy}`,
@@ -184,9 +178,7 @@ function deriveStrategyLessons(experiences: TradeExperience[]): Lesson[] {
         sourceExperienceIds: strategyExps.map(e => e.id),
         createdAt: new Date().toISOString(),
       });
-    }
-    // Low-performing strategy
-    else if (winRate <= 40 && strategyExps.length >= 5) {
+    } else if (winRate <= 40 && strategyExps.length >= 5) {
       lessons.push({
         id: `LESSON-${Date.now()}-${lessonCycle}-STRAT-${strategy}`,
         text: `${strategy} strategy underperforming (${winRate.toFixed(1)}% win rate over ${strategyExps.length} trades). Review parameters or consider deactivation.`,
@@ -208,11 +200,9 @@ function deriveStrategyLessons(experiences: TradeExperience[]): Lesson[] {
 function deriveConfidenceLessons(experiences: TradeExperience[]): Lesson[] {
   const lessons: Lesson[] = [];
 
-  // Group by confidence level
   const highConf = experiences.filter(e => e.confidence >= 0.7);
   const lowConf = experiences.filter(e => e.confidence < 0.4);
 
-  // Analyze high confidence
   if (highConf.length >= 5) {
     const wins = highConf.filter(e => e.outcome === "WIN").length;
     const winRate = (wins / highConf.length) * 100;
@@ -231,7 +221,6 @@ function deriveConfidenceLessons(experiences: TradeExperience[]): Lesson[] {
     }
   }
 
-  // Analyze low confidence
   if (lowConf.length >= 5) {
     const wins = lowConf.filter(e => e.outcome === "WIN").length;
     const winRate = (wins / lowConf.length) * 100;
@@ -258,12 +247,10 @@ function deriveConfidenceLessons(experiences: TradeExperience[]): Lesson[] {
 function deriveRiskLessons(experiences: TradeExperience[]): Lesson[] {
   const lessons: Lesson[] = [];
 
-  // Analyze NO_TRADE decisions
   const noTrades = experiences.filter(e => e.direction === "NO_TRADE");
   const trades = experiences.filter(e => e.direction !== "NO_TRADE");
 
   if (noTrades.length >= 3 && trades.length >= 3) {
-    // Check if NO_TRADE avoided losses
     const tradeLosses = trades.filter(e => e.outcome === "LOSS").length;
     const tradeLossRate = (tradeLosses / trades.length) * 100;
 
@@ -281,7 +268,6 @@ function deriveRiskLessons(experiences: TradeExperience[]): Lesson[] {
     }
   }
 
-  // Analyze rejected decisions
   const rejected = experiences.filter(e => e.outcome === "CANCELLED");
   if (rejected.length >= 3) {
     lessons.push({
@@ -304,11 +290,9 @@ function deriveRiskLessons(experiences: TradeExperience[]): Lesson[] {
 function deriveTimingLessons(experiences: TradeExperience[]): Lesson[] {
   const lessons: Lesson[] = [];
 
-  // Analyze trade duration
   const tradesWithDuration = experiences.filter(e => e.duration !== null && e.duration > 0);
 
   if (tradesWithDuration.length >= 5) {
-    const avgDuration = tradesWithDuration.reduce((sum, e) => sum + (e.duration || 0), 0) / tradesWithDuration.length;
     const wins = tradesWithDuration.filter(e => e.outcome === "WIN");
     const losses = tradesWithDuration.filter(e => e.outcome === "LOSS");
 
@@ -316,7 +300,6 @@ function deriveTimingLessons(experiences: TradeExperience[]): Lesson[] {
       const avgWinDuration = wins.reduce((sum, e) => sum + (e.duration || 0), 0) / wins.length;
       const avgLossDuration = losses.reduce((sum, e) => sum + (e.duration || 0), 0) / losses.length;
 
-      // If losses are significantly longer than wins, might need tighter stops
       if (avgLossDuration > avgWinDuration * 1.5) {
         lessons.push({
           id: `LESSON-${Date.now()}-${lessonCycle}-TIMING-DURATION`,
@@ -337,13 +320,13 @@ function deriveTimingLessons(experiences: TradeExperience[]): Lesson[] {
 
 // ─── Database Persistence ───────────────────────────────────────────
 
-function persistLesson(lesson: Lesson): void {
+async function persistLesson(lesson: Lesson): Promise<void> {
   try {
-    const db = getDatabase();
-    db.prepare(`
-      INSERT INTO ai_lessons (id, text, cycle, source_experience_ids)
-      VALUES (?, ?, ?, ?)
-    `).run(lesson.id, lesson.text, lesson.cycle, JSON.stringify(lesson.sourceExperienceIds));
+    await dbExecute(
+      `INSERT INTO ai_lessons (id, text, cycle, source_experience_ids)
+       VALUES ($1, $2, $3, $4)`,
+      [lesson.id, lesson.text, lesson.cycle, JSON.stringify(lesson.sourceExperienceIds)],
+    );
   } catch (error) {
     logger.error("lesson-engine", `Failed to persist lesson: ${error}`);
   }
@@ -351,19 +334,19 @@ function persistLesson(lesson: Lesson): void {
 
 // ─── Query Functions ────────────────────────────────────────────────
 
-export function getRecentLessons(limit: number = 20): Lesson[] {
+export async function getRecentLessons(limit: number = 20): Promise<Lesson[]> {
   try {
-    const db = getDatabase();
-    const rows = db.prepare(`
-      SELECT * FROM ai_lessons ORDER BY created_at DESC LIMIT ?
-    `).all(limit) as Array<Record<string, unknown>>;
+    const rows = await dbQuery(
+      `SELECT * FROM ai_lessons ORDER BY created_at DESC LIMIT $1`,
+      [limit],
+    );
 
     return rows.map(row => ({
       id: row['id'] as string,
       text: row['text'] as string,
       cycle: row['cycle'] as number,
-      category: "GENERAL" as LessonCategory, // Could be parsed from text
-      confidence: 0.5, // Default confidence
+      category: "GENERAL" as LessonCategory,
+      confidence: 0.5,
       evidenceCount: 0,
       sourceExperienceIds: JSON.parse(row['source_experience_ids'] as string || "[]"),
       createdAt: row['created_at'] as string,
@@ -374,20 +357,19 @@ export function getRecentLessons(limit: number = 20): Lesson[] {
   }
 }
 
-export function getLessonStats(): {
+export async function getLessonStats(): Promise<{
   totalLessons: number;
   latestCycle: number;
   byCategory: Record<string, number>;
-} {
+}> {
   try {
-    const db = getDatabase();
-    const total = db.prepare("SELECT COUNT(*) as count FROM ai_lessons").get() as { count: number };
-    const latest = db.prepare("SELECT MAX(cycle) as cycle FROM ai_lessons").get() as { cycle: number };
+    const total = await dbQueryOne("SELECT COUNT(*) as count FROM ai_lessons");
+    const latest = await dbQueryOne("SELECT MAX(cycle) as cycle FROM ai_lessons");
 
     return {
-      totalLessons: total.count,
-      latestCycle: latest.cycle || 0,
-      byCategory: {}, // Would need to parse lesson text for categories
+      totalLessons: (total?.['count'] as number) || 0,
+      latestCycle: (latest?.['cycle'] as number) || 0,
+      byCategory: {},
     };
   } catch (error) {
     logger.error("lesson-engine", `Failed to get stats: ${error}`);

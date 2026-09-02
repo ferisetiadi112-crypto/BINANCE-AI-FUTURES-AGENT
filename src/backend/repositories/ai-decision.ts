@@ -1,4 +1,4 @@
-import { getDatabase } from "../database";
+import { dbQueryOne, dbQuery } from "../database/adapter";
 
 export type AiDecisionRecord = {
   id: string;
@@ -20,37 +20,39 @@ export type AiDecisionRecord = {
 };
 
 export const aiDecisionRepository = {
-  getLatest(): AiDecisionRecord | undefined {
-    return getDatabase()
-      .prepare("SELECT * FROM ai_decisions ORDER BY created_at DESC LIMIT 1")
-      .get() as AiDecisionRecord | undefined;
+  async getLatest(): Promise<AiDecisionRecord | undefined> {
+    const row = await dbQueryOne(
+      "SELECT * FROM ai_decisions ORDER BY created_at DESC LIMIT 1"
+    );
+    return row as AiDecisionRecord | undefined;
   },
 
-  getRecent(limit = 10): AiDecisionRecord[] {
-    return getDatabase()
-      .prepare("SELECT * FROM ai_decisions ORDER BY created_at DESC LIMIT ?")
-      .all(limit) as AiDecisionRecord[];
+  async getRecent(limit = 10): Promise<AiDecisionRecord[]> {
+    const rows = await dbQuery(
+      "SELECT * FROM ai_decisions ORDER BY created_at DESC LIMIT $1",
+      [limit]
+    );
+    return rows as unknown as AiDecisionRecord[];
   },
 
-  getById(id: string): AiDecisionRecord | undefined {
-    return getDatabase()
-      .prepare("SELECT * FROM ai_decisions WHERE id = ?")
-      .get(id) as AiDecisionRecord | undefined;
+  async getById(id: string): Promise<AiDecisionRecord | undefined> {
+    const row = await dbQueryOne("SELECT * FROM ai_decisions WHERE id = $1", [id]);
+    return row as AiDecisionRecord | undefined;
   },
 
-  getStats(): { totalDecisions: number; executedCount: number; avgConfidence: number } {
-    const db = getDatabase();
-    const stats = db.prepare(`
+  async getStats(): Promise<{ totalDecisions: number; executedCount: number; avgConfidence: number }> {
+    const stats = await dbQueryOne(`
       SELECT
-        COUNT(*) as totalDecisions,
-        SUM(CASE WHEN executed = 1 THEN 1 ELSE 0 END) as executedCount,
-        AVG(confidence) as avgConfidence
+        COUNT(*) as "totalDecisions",
+        SUM(CASE WHEN executed = 1 THEN 1 ELSE 0 END) as "executedCount",
+        AVG(confidence) as "avgConfidence"
       FROM ai_decisions
-    `).get() as { totalDecisions: number; executedCount: number; avgConfidence: number };
+    `) as { totalDecisions: number; executedCount: number; avgConfidence: number } | undefined;
+
     return {
-      totalDecisions: stats.totalDecisions || 0,
-      executedCount: stats.executedCount || 0,
-      avgConfidence: Math.round((stats.avgConfidence || 0) * 10) / 10,
+      totalDecisions: Number(stats?.totalDecisions || 0),
+      executedCount: Number(stats?.executedCount || 0),
+      avgConfidence: Math.round(Number(stats?.avgConfidence || 0) * 10) / 10,
     };
   },
 };

@@ -183,15 +183,15 @@ export async function withTestnetAuth<T>(
  * Perform a top-up with server-derived identity.
  * The initiated_by is ALWAYS set to the authenticated user — never from client input.
  */
-export function serverTopUp(
+export async function serverTopUp(
   ctx: SessionContext,
   amount: number,
   note: string,
-): number {
-  const newBalance = walletRepository.topUp(amount, note);
+): Promise<number> {
+  const newBalance = await walletRepository.topUp(amount, note);
 
   // Log with server-derived identity
-  walletRepository.logGuardrailEvent(
+  await walletRepository.logGuardrailEvent(
     "WALLET_MODIFIED",
     "INFO",
     `Top-up: $${amount.toFixed(2)} by ${ctx.userId} — New balance: $${newBalance.toFixed(2)}`,
@@ -210,15 +210,15 @@ export function serverTopUp(
 /**
  * Perform a withdrawal with server-derived identity.
  */
-export function serverWithdraw(
+export async function serverWithdraw(
   ctx: SessionContext,
   amount: number,
   note: string,
-): number {
-  const newBalance = walletRepository.withdraw(amount, note);
+): Promise<number> {
+  const newBalance = await walletRepository.withdraw(amount, note);
 
   // Log with server-derived identity
-  walletRepository.logGuardrailEvent(
+  await walletRepository.logGuardrailEvent(
     "WALLET_MODIFIED",
     "INFO",
     `Withdrawal: $${amount.toFixed(2)} by ${ctx.userId} — New balance: $${newBalance.toFixed(2)}`,

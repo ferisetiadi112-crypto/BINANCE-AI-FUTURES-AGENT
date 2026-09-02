@@ -1,4 +1,4 @@
-import { getDatabase } from "../database";
+import { dbQueryOne, dbQuery, dbExecute } from "../database/adapter";
 
 export type StrategyRecord = {
   id: string;
@@ -18,37 +18,37 @@ export type StrategyRecord = {
 };
 
 export const strategyRepository = {
-  getById(id: string): StrategyRecord | undefined {
-    return getDatabase()
-      .prepare("SELECT * FROM strategies WHERE id = ?")
-      .get(id) as StrategyRecord | undefined;
+  async getById(id: string): Promise<StrategyRecord | undefined> {
+    const row = await dbQueryOne("SELECT * FROM strategies WHERE id = $1", [id]);
+    return row as StrategyRecord | undefined;
   },
 
-  getAll(): StrategyRecord[] {
-    return getDatabase()
-      .prepare("SELECT * FROM strategies ORDER BY allocation_percent DESC")
-      .all() as StrategyRecord[];
+  async getAll(): Promise<StrategyRecord[]> {
+    const rows = await dbQuery("SELECT * FROM strategies ORDER BY allocation_percent DESC");
+    return rows as unknown as StrategyRecord[];
   },
 
-  getActive(): StrategyRecord[] {
-    return getDatabase()
-      .prepare("SELECT * FROM strategies WHERE state = 'ACTIVE' ORDER BY allocation_percent DESC")
-      .all() as StrategyRecord[];
+  async getActive(): Promise<StrategyRecord[]> {
+    const rows = await dbQuery(
+      "SELECT * FROM strategies WHERE state = 'ACTIVE' ORDER BY allocation_percent DESC"
+    );
+    return rows as unknown as StrategyRecord[];
   },
 
-  getByState(state: string): StrategyRecord[] {
-    return getDatabase()
-      .prepare("SELECT * FROM strategies WHERE state = ? ORDER BY allocation_percent DESC")
-      .all(state) as StrategyRecord[];
+  async getByState(state: string): Promise<StrategyRecord[]> {
+    const rows = await dbQuery(
+      "SELECT * FROM strategies WHERE state = $1 ORDER BY allocation_percent DESC",
+      [state]
+    );
+    return rows as unknown as StrategyRecord[];
   },
 
-  updateMetrics(id: string, winRate: number, profitFactor: number, totalTrades: number, totalPnl: number): void {
-    getDatabase()
-      .prepare(`
-        UPDATE strategies
-        SET win_rate = ?, profit_factor = ?, total_trades = ?, total_pnl = ?, updated_at = datetime('now')
-        WHERE id = ?
-      `)
-      .run(winRate, profitFactor, totalTrades, totalPnl, id);
+  async updateMetrics(id: string, winRate: number, profitFactor: number, totalTrades: number, totalPnl: number): Promise<void> {
+    await dbExecute(
+      `UPDATE strategies
+       SET win_rate = $1, profit_factor = $2, total_trades = $3, total_pnl = $4, updated_at = datetime('now')
+       WHERE id = $5`,
+      [winRate, profitFactor, totalTrades, totalPnl, id]
+    );
   },
 };

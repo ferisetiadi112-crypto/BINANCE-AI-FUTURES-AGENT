@@ -17,6 +17,8 @@
  * - All orders validated against wallet balance BEFORE placement
  * - Balance check uses sandbox wallet (Boss-controlled)
  * - Every order result persisted with full audit trail
+ *
+ * Database: Async via PostgreSQL adapter (dbQuery/dbExecute).
  */
 
 import {
@@ -28,7 +30,7 @@ import {
 } from "./binance-testnet";
 import { walletRepository } from "../repositories/wallet";
 import { logger } from "../logger";
-import { getDatabase } from "../database";
+import { dbQueryOne, dbExecute } from "../database";
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -69,7 +71,7 @@ const CAPITAL_LIMIT = 5.0;
 const DAILY_PROFIT_CAP = 0.50;
 const DAILY_LOSS_LIMIT = 0.50;
 const MAX_LEVERAGE = 10;
-const MAX_POSITION_SIZE_PERCENT = 20; // 20% of capital per trade
+const MAX_POSITION_SIZE_PERCENT = 20;
 const MIN_WALLET_BALANCE = 0.50;
 
 // ─── Testnet Executor ───────────────────────────────────────────────
@@ -92,10 +94,6 @@ export class TestnetExecutor {
 
   // ─── Execute Trade Decision ──────────────────────────────────────
 
-  /**
-   * Execute an AI decision on Binance Futures Testnet.
-   * Returns the execution result with guardrail status.
-   */
   async executeTrade(
     direction: "LONG" | "SHORT",
     symbol: string,
@@ -119,11 +117,10 @@ export class TestnetExecutor {
 
     // ─── Pre-flight Guardrail Checks ───────────────────────────
 
-    // 1. Wallet balance check
-    const walletBalance = walletRepository.getBalance();
+    const walletBalance = await walletRepository.getBalance();
     if (walletBalance < MIN_WALLET_BALANCE) {
       const reason = `Insufficient wallet balance: $${walletBalance.toFixed(2)} (min: $${MIN_WALLET_BALANCE.toFixed(2)})`;
-      walletRepository.logGuardrailEvent(
+      await walletRepository.logGuardrailEvent(
         "INSUFFICIENT_FUNDS",
         "ERROR",
         reason,
@@ -143,10 +140,9 @@ export class TestnetExecutor {
       };
     }
 
-    // 2. Capital limit check
     if (walletBalance > CAPITAL_LIMIT) {
       const reason = `Wallet balance $${walletBalance.toFixed(2)} exceeds $${CAPITAL_LIMIT.toFixed(2)} limit`;
-      walletRepository.logGuardrailEvent(
+      await walletRepository.logGuardrailEvent(
         "TRADE_BLOCKED",
         "ERROR",
         reason,
@@ -166,9 +162,8 @@ export class TestnetExecutor {
       };
     }
 
-    // 3. Calculate position size (20% of wallet balance)
     const positionValue = walletBalance * (MAX_POSITION_SIZE_PERCENT / 100);
-    const quantity = Math.floor((positionValue / currentPrice) * 1000) / 1000; // 3 decimal places for BTC
+    const quantity = Math.floor((positionValue / currentPrice) * 1000) / 1000;
 
     if (quantity <= 0) {
       return {
@@ -187,15 +182,13 @@ export class TestnetExecutor {
     // ─── Execute Order ─────────────────────────────────────────
 
     try {
-      // Set leverage before order
       await this.client.setLeverage(symbol, MAX_LEVERAGE);
 
       const order = await this.client.placeMarketOrder(symbol, side, quantity);
 
       this.executionCount++;
 
-      // Log success
-      walletRepository.logGuardrailEvent(
+      await walletRepository.logGuardrailEvent(
         "TRADE_ALLOWED",
         "INFO",
         `Testnet order placed: ${side} ${quantity} ${symbol} @ ~$${currentPrice} (orderId: ${order.orderId})`,
@@ -210,8 +203,8 @@ export class TestnetExecutor {
         walletBalance,
       );
 
-      // Persist to database
-      this.persistOrder(order, side, symbol, quantity, currentPrice);
+      // Persist to database (async)
+      await this.persistOrder(order, side, symbol, quantity, currentPrice);
 
       return {
         success: order.status === "FILLED" || order.status === "NEW",
@@ -224,7 +217,7 @@ export class TestnetExecutor {
       };
     } catch (error) {
       if (error instanceof BinanceTestnetError) {
-        walletRepository.logGuardrailEvent(
+        await walletRepository.logGuardrailEvent(
           "TRADE_BLOCKED",
           "WARN",
           `Testnet order failed: ${error.message}`,
@@ -246,7 +239,7 @@ export class TestnetExecutor {
       }
 
       const errorMsg = error instanceof Error ? error.message : String(error);
-      walletRepository.logGuardrailEvent(
+      await walletRepository.logGuardrailEvent(
         "TRADE_BLOCKED",
         "ERROR",
         `Testnet execution error: ${errorMsg}`,
@@ -269,40 +262,39 @@ export class TestnetExecutor {
 
   // ─── Database Persistence ────────────────────────────────────────
 
-  private persistOrder(
+  private async persistOrder(
     order: TestnetOrderResponse,
     side: "BUY" | "SELL",
     symbol: string,
     quantity: number,
     price: number,
-  ): void {
+  ): Promise<void> {
     try {
-      const db = getDatabase();
-
-      // Get main account
-      const account = db
-        .prepare("SELECT id FROM accounts ORDER BY created_at ASC LIMIT 1")
-        .get() as { id: string } | undefined;
+      const account = await dbQueryOne(
+        "SELECT id FROM accounts ORDER BY created_at ASC LIMIT 1"
+      );
 
       if (!account) {
         logger.warn("testnet-executor", "No account found for persistence");
         return;
       }
 
-      // Insert order record
       const orderId = `TESTNET-${order.orderId}`;
-      db.prepare(
-        `INSERT OR REPLACE INTO orders (id, account_id, symbol, side, order_type, price, quantity, filled_quantity, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'MARKET', ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-      ).run(
-        orderId,
-        account.id,
-        symbol,
-        side === "BUY" ? "LONG" : "SHORT",
-        price,
-        quantity,
-        order.status === "FILLED" ? quantity : 0,
-        order.status === "FILLED" ? "FILLED" : order.status,
+      await dbExecute(
+        `INSERT INTO orders (id, account_id, symbol, side, order_type, price, quantity, filled_quantity, status, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'MARKET', $5, $6, $7, $8, NOW()::TEXT, NOW()::TEXT)
+         ON CONFLICT (id) DO UPDATE SET
+           price = $5, quantity = $6, filled_quantity = $7, status = $8, updated_at = NOW()::TEXT`,
+        [
+          orderId,
+          account['id'],
+          symbol,
+          side === "BUY" ? "LONG" : "SHORT",
+          price,
+          quantity,
+          order.status === "FILLED" ? quantity : 0,
+          order.status === "FILLED" ? "FILLED" : order.status,
+        ],
       );
 
       logger.info(
@@ -317,7 +309,7 @@ export class TestnetExecutor {
   /**
    * Persist a completed trade to the trades table.
    */
-  persistTrade(
+  async persistTrade(
     symbol: string,
     side: "BUY" | "SELL",
     entryPrice: number,
@@ -327,40 +319,40 @@ export class TestnetExecutor {
     durationMinutes: number,
     strategyName: string,
     strategyVersion: string,
-  ): void {
+  ): Promise<void> {
     try {
-      const db = getDatabase();
-      const account = db
-        .prepare("SELECT id FROM accounts ORDER BY created_at ASC LIMIT 1")
-        .get() as { id: string } | undefined;
+      const account = await dbQueryOne(
+        "SELECT id FROM accounts ORDER BY created_at ASC LIMIT 1"
+      );
 
       if (!account) return;
 
       const tradeId = `TESTNET-TRD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const pnlPercent = (pnl / (entryPrice * quantity)) * 100;
 
-      db.prepare(
+      await dbExecute(
         `INSERT INTO trades (id, account_id, symbol, side, entry_price, exit_price, quantity, pnl, pnl_percent, duration_minutes, strategy_name, strategy_version, opened_at, closed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-      ).run(
-        tradeId,
-        account.id,
-        symbol,
-        side === "BUY" ? "LONG" : "SHORT",
-        entryPrice,
-        exitPrice,
-        quantity,
-        pnl,
-        pnlPercent,
-        durationMinutes,
-        strategyName,
-        strategyVersion,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW()::TEXT, NOW()::TEXT)`,
+        [
+          tradeId,
+          account['id'],
+          symbol,
+          side === "BUY" ? "LONG" : "SHORT",
+          entryPrice,
+          exitPrice,
+          quantity,
+          pnl,
+          pnlPercent,
+          durationMinutes,
+          strategyName,
+          strategyVersion,
+        ],
       );
 
-      // Update account realized PnL
-      db.prepare(
-        "UPDATE accounts SET realized_pnl = realized_pnl + ?, updated_at = datetime('now') WHERE id = ?",
-      ).run(pnl, account.id);
+      await dbExecute(
+        "UPDATE accounts SET realized_pnl = realized_pnl + $1, updated_at = NOW()::TEXT WHERE id = $2",
+        [pnl, account['id']],
+      );
 
       logger.info(
         "testnet-executor",
@@ -461,33 +453,27 @@ export class TestnetExecutor {
 
   // ─── Balance Sync ────────────────────────────────────────────────
 
-  /**
-   * Sync Binance testnet balance to the sandbox wallet.
-   * This ensures the sandbox wallet reflects the actual testnet balance.
-   */
   async syncBalance(): Promise<number> {
     if (!this.client) {
-      return walletRepository.getBalance();
+      return await walletRepository.getBalance();
     }
 
     try {
       const testnetBalance = await this.client.getUSDTBalance();
-      const currentBalance = walletRepository.getBalance();
+      const currentBalance = await walletRepository.getBalance();
 
-      // Update sandbox wallet to match testnet
       if (Math.abs(testnetBalance - currentBalance) > 0.001) {
-        const account = getDatabase()
-          .prepare("SELECT id FROM accounts ORDER BY created_at ASC LIMIT 1")
-          .get() as { id: string } | undefined;
+        const account = await dbQueryOne(
+          "SELECT id FROM accounts ORDER BY created_at ASC LIMIT 1"
+        );
 
         if (account) {
-          getDatabase()
-            .prepare(
-              "UPDATE accounts SET balance = ?, equity = ?, updated_at = datetime('now') WHERE id = ?",
-            )
-            .run(testnetBalance, testnetBalance, account.id);
+          await dbExecute(
+            "UPDATE accounts SET balance = $1, equity = $1, updated_at = NOW()::TEXT WHERE id = $2",
+            [testnetBalance, account['id']],
+          );
 
-          walletRepository.logGuardrailEvent(
+          await walletRepository.logGuardrailEvent(
             "BALANCE_CHECK",
             "INFO",
             `Balance synced: sandbox $${currentBalance.toFixed(2)} → testnet $${testnetBalance.toFixed(2)}`,
@@ -505,7 +491,7 @@ export class TestnetExecutor {
       return testnetBalance;
     } catch (error) {
       logger.error("testnet-executor", `Balance sync failed: ${error}`);
-      return walletRepository.getBalance();
+      return await walletRepository.getBalance();
     }
   }
 }

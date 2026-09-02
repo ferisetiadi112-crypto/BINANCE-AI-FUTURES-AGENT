@@ -1,4 +1,4 @@
-import { getDatabase } from "../database";
+import { dbQueryOne, dbQuery, dbExecute } from "../database/adapter";
 
 export type AccountRecord = {
   id: string;
@@ -13,27 +13,25 @@ export type AccountRecord = {
 };
 
 export const accountRepository = {
-  getById(id: string): AccountRecord | undefined {
-    return getDatabase()
-      .prepare("SELECT * FROM accounts WHERE id = ?")
-      .get(id) as AccountRecord | undefined;
+  async getById(id: string): Promise<AccountRecord | undefined> {
+    const row = await dbQueryOne("SELECT * FROM accounts WHERE id = $1", [id]);
+    return row as AccountRecord | undefined;
   },
 
-  getMain(): AccountRecord | undefined {
-    return getDatabase()
-      .prepare("SELECT * FROM accounts ORDER BY created_at ASC LIMIT 1")
-      .get() as AccountRecord | undefined;
+  async getMain(): Promise<AccountRecord | undefined> {
+    const row = await dbQueryOne("SELECT * FROM accounts ORDER BY created_at ASC LIMIT 1");
+    return row as AccountRecord | undefined;
   },
 
-  getAll(): AccountRecord[] {
-    return getDatabase()
-      .prepare("SELECT * FROM accounts ORDER BY created_at")
-      .all() as AccountRecord[];
+  async getAll(): Promise<AccountRecord[]> {
+    const rows = await dbQuery("SELECT * FROM accounts ORDER BY created_at");
+    return rows as unknown as AccountRecord[];
   },
 
-  updateBalance(id: string, balance: number, equity: number): void {
-    getDatabase()
-      .prepare("UPDATE accounts SET balance = ?, equity = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(balance, equity, id);
+  async updateBalance(id: string, balance: number, equity: number): Promise<void> {
+    await dbExecute(
+      "UPDATE accounts SET balance = $1, equity = $2, updated_at = datetime('now') WHERE id = $3",
+      [balance, equity, id]
+    );
   },
 };

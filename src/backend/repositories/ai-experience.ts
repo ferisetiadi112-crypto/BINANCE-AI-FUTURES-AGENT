@@ -1,4 +1,4 @@
-import { getDatabase } from "../database";
+import { dbQueryOne, dbQuery } from "../database/adapter";
 
 export type AiExperienceRecord = {
   id: string;
@@ -12,26 +12,26 @@ export type AiExperienceRecord = {
 };
 
 export const aiExperienceRepository = {
-  getAll(): AiExperienceRecord[] {
-    return getDatabase()
-      .prepare("SELECT * FROM ai_experiences ORDER BY confidence DESC")
-      .all() as AiExperienceRecord[];
+  async getAll(): Promise<AiExperienceRecord[]> {
+    const rows = await dbQuery("SELECT * FROM ai_experiences ORDER BY confidence DESC");
+    return rows as unknown as AiExperienceRecord[];
   },
 
-  getByTag(tag: string): AiExperienceRecord[] {
-    return getDatabase()
-      .prepare("SELECT * FROM ai_experiences WHERE tag = ? ORDER BY confidence DESC")
-      .all(tag) as AiExperienceRecord[];
+  async getByTag(tag: string): Promise<AiExperienceRecord[]> {
+    const rows = await dbQuery(
+      "SELECT * FROM ai_experiences WHERE tag = $1 ORDER BY confidence DESC",
+      [tag]
+    );
+    return rows as unknown as AiExperienceRecord[];
   },
 
-  getById(id: string): AiExperienceRecord | undefined {
-    return getDatabase()
-      .prepare("SELECT * FROM ai_experiences WHERE id = ?")
-      .get(id) as AiExperienceRecord | undefined;
+  async getById(id: string): Promise<AiExperienceRecord | undefined> {
+    const row = await dbQueryOne("SELECT * FROM ai_experiences WHERE id = $1", [id]);
+    return row as AiExperienceRecord | undefined;
   },
 
-  count(): number {
-    const result = getDatabase().prepare("SELECT COUNT(*) as count FROM ai_experiences").get() as { count: number };
-    return result.count;
+  async count(): Promise<number> {
+    const result = await dbQueryOne("SELECT COUNT(*) as count FROM ai_experiences") as { count: number } | undefined;
+    return Number(result?.count ?? 0);
   },
 };

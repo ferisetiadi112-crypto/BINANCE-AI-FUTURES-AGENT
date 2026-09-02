@@ -106,7 +106,7 @@ function System() {
               { name: "Dashboard UI", desc: "TanStack Start + React 19", icon: <Globe className="h-4 w-4" /> },
               { name: "API Layer", desc: "Server Functions (TanStack Start)", icon: <Server className="h-4 w-4" /> },
               { name: "Data Adapter", desc: "Database → Mock fallback", icon: <HardDrive className="h-4 w-4" /> },
-              { name: "Database", desc: "SQLite (better-sqlite3)", icon: <HardDrive className="h-4 w-4" /> },
+              { name: "Database", desc: health?.database === "connected" ? "PostgreSQL (Neon)" : "SQLite (dev fallback)", icon: <HardDrive className="h-4 w-4" /> },
               { name: "Trading Engine", desc: "Long-running process — Phase 4", icon: <Cpu className="h-4 w-4" /> },
               { name: "Binance Adapter", desc: "Exchange interface — Phase 4", icon: <Wifi className="h-4 w-4" /> },
             ].map((c) => (

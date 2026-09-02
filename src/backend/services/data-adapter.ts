@@ -2,7 +2,7 @@
  * Data Adapter — BINANCE AI FUTURES AGENT v0.1
  *
  * Abstraction layer between API/server functions and data source.
- * Phase 2: Reads from SQLite database via repositories.
+ * Phase 2: Reads from PostgreSQL database via async repositories.
  * Falls back to mock data when database has no records (development mode).
  *
  * The frontend and API routes NEVER import mock-data.ts directly.
@@ -42,10 +42,9 @@ export type DataSource = "mock" | "database" | "live";
 
 let currentSource: DataSource = "mock";
 
-export function getDataSource(): DataSource {
-  // Check if database has data
+export async function getDataSource(): Promise<DataSource> {
   try {
-    const account = accountRepository.getMain();
+    const account = await accountRepository.getMain();
     if (account) {
       currentSource = "database";
     }
@@ -64,15 +63,15 @@ function money(n: number): string {
 // ─── Dashboard ────────────────────────────────────────────────────────
 
 export async function fetchDashboard(): Promise<DashboardResponse> {
-  const db = getDataSource() === "database";
+  const db = (await getDataSource()) === "database";
 
   if (db) {
-    const account = accountRepository.getMain();
-    const trades = tradeRepository.getRecent(5);
-    const stats = tradeRepository.getStats();
-    const positions = positionRepository.getOpen();
-    const latestDecision = aiDecisionRepository.getLatest();
-    const config = systemConfigRepository.getConfig();
+    const account = await accountRepository.getMain();
+    const trades = await tradeRepository.getRecent(5);
+    const stats = await tradeRepository.getStats();
+    const positions = await positionRepository.getOpen();
+    const latestDecision = await aiDecisionRepository.getLatest();
+    const config = await systemConfigRepository.getConfig();
 
     return {
       account: account ? {
@@ -138,12 +137,12 @@ export async function fetchDashboard(): Promise<DashboardResponse> {
 // ─── Runtime ──────────────────────────────────────────────────────────
 
 export async function fetchRuntime(): Promise<RuntimeResponse> {
-  const db = getDataSource() === "database";
+  const db = (await getDataSource()) === "database";
 
   if (db) {
-    const latestDecision = aiDecisionRepository.getLatest();
-    const positions = positionRepository.getOpen();
-    const strategies = strategyRepository.getAll();
+    const latestDecision = await aiDecisionRepository.getLatest();
+    const positions = await positionRepository.getOpen();
+    const strategies = await strategyRepository.getAll();
 
     return {
       aiIntelligence: {
@@ -198,7 +197,7 @@ export async function fetchRuntime(): Promise<RuntimeResponse> {
         updatedAt: s.updated_at,
       })),
       uptime: "14d 06h 22m",
-      tradingStatus: systemConfigRepository.getBoolean("trading_enabled", false) ? "ACTIVE" : "SIMULATION",
+      tradingStatus: (await systemConfigRepository.getBoolean("trading_enabled", false)) ? "ACTIVE" : "SIMULATION",
     };
   }
 
@@ -220,10 +219,10 @@ export async function fetchMarket() {
 // ─── Strategies ───────────────────────────────────────────────────────
 
 export async function fetchStrategies(): Promise<Strategy[]> {
-  const db = getDataSource() === "database";
+  const db = (await getDataSource()) === "database";
 
   if (db) {
-    const strategies = strategyRepository.getAll();
+    const strategies = await strategyRepository.getAll();
     return strategies.map(s => ({
       id: s.id,
       name: s.name,
@@ -248,10 +247,10 @@ export async function fetchStrategies(): Promise<Strategy[]> {
 // ─── Trades ───────────────────────────────────────────────────────────
 
 export async function fetchTrades(): Promise<Trade[]> {
-  const db = getDataSource() === "database";
+  const db = (await getDataSource()) === "database";
 
   if (db) {
-    const trades = tradeRepository.getRecent(50);
+    const trades = await tradeRepository.getRecent(50);
     return trades.map(t => ({
       id: t.id,
       symbol: t.symbol,
@@ -277,18 +276,17 @@ export async function fetchTrades(): Promise<Trade[]> {
 // ─── Learning ─────────────────────────────────────────────────────────
 
 export async function fetchLearning(): Promise<LearningResponse> {
-  const db = getDataSource() === "database";
+  const db = (await getDataSource()) === "database";
 
   if (db) {
-    const experiences = aiExperienceRepository.getAll();
-    const lessons = aiLessonRepository.getAll();
-    const currentCycle = aiLessonRepository.getLatestCycle();
+    const experiences = await aiExperienceRepository.getAll();
+    const lessons = await aiLessonRepository.getAll();
+    const currentCycle = await aiLessonRepository.getLatestCycle();
 
-    // Get Phase 5 trade experiences and lessons
-    const tradeExperiences = getRecentExperiences(50);
-    const experienceStats = getExperienceStats();
-    const recentLessons = getRecentLessons(20);
-    const lessonStats = getLessonStats();
+    const tradeExperiences = await getRecentExperiences(50);
+    const experienceStats = await getExperienceStats();
+    const recentLessons = await getRecentLessons(20);
+    const lessonStats = await getLessonStats();
 
     return {
       experiences: experiences.map(e => ({
@@ -310,7 +308,6 @@ export async function fetchLearning(): Promise<LearningResponse> {
       })),
       timeline: mock.getLearningData().timeline,
       improvement: mock.getLearningData().improvement,
-      // Phase 5: Trade experiences and derived lessons
       tradeExperiences: tradeExperiences.map(te => ({
         id: te.id,
         decisionId: te.decisionId,
@@ -360,11 +357,11 @@ export async function fetchExperiments() {
 // ─── Risk ─────────────────────────────────────────────────────────────
 
 export async function fetchRisk(): Promise<RiskEnvelope> {
-  const db = getDataSource() === "database";
+  const db = (await getDataSource()) === "database";
 
   if (db) {
-    const config = systemConfigRepository.getConfig();
-    const openCount = positionRepository.getOpenCount();
+    const config = await systemConfigRepository.getConfig();
+    const openCount = await positionRepository.getOpenCount();
 
     return {
       dailyProfitCap: config.dailyProfitCap,
@@ -386,10 +383,10 @@ export async function fetchRisk(): Promise<RiskEnvelope> {
 }
 
 export async function fetchRiskEvents() {
-  const db = getDataSource() === "database";
+  const db = (await getDataSource()) === "database";
 
   if (db) {
-    const events = riskEventRepository.getRecent(10);
+    const events = await riskEventRepository.getRecent(10);
     return events.map(e => ({
       id: String(e.id),
       type: e.event_type,
@@ -406,10 +403,10 @@ export async function fetchRiskEvents() {
 // ─── System ───────────────────────────────────────────────────────────
 
 export async function fetchSystem() {
-  const db = getDataSource() === "database";
+  const db = (await getDataSource()) === "database";
 
   if (db) {
-    const config = systemConfigRepository.getConfig();
+    const config = await systemConfigRepository.getConfig();
     return {
       nodes: mock.getSystemData().nodes,
       config: {
@@ -440,15 +437,15 @@ export async function fetchAudit() {
 // ─── Paper Status (Phase 8B) ─────────────────────────────────────────
 
 export async function fetchPaperStatus(): Promise<PaperStatusResponse> {
-  const db = getDataSource() === "database";
+  const db = (await getDataSource()) === "database";
 
   if (db) {
-    const account = accountRepository.getMain();
-    const stats = tradeRepository.getStats();
-    const positions = positionRepository.getOpen();
-    const trades = tradeRepository.getRecent(10);
-    const latestDecision = aiDecisionRepository.getLatest();
-    const riskConfig = systemConfigRepository.getConfig();
+    const account = await accountRepository.getMain();
+    const stats = await tradeRepository.getStats();
+    const positions = await positionRepository.getOpen();
+    const trades = await tradeRepository.getRecent(10);
+    const latestDecision = await aiDecisionRepository.getLatest();
+    const riskConfig = await systemConfigRepository.getConfig();
 
     const activePosition = positions[0]
       ? {
@@ -470,7 +467,6 @@ export async function fetchPaperStatus(): Promise<PaperStatusResponse> {
         }
       : null;
 
-    // Phase 8C: Real feed state from WebSocket FeedManager (no Math.random)
     const feedManager = getFeedManager();
     const feedSymbols: SymbolFeedStatus[] = feedManager.getFeedStatusesForApi();
     const feedAggregate = feedManager.computeAggregateState();
@@ -515,14 +511,12 @@ export async function fetchPaperStatus(): Promise<PaperStatusResponse> {
     };
   }
 
-  // Mock fallback
   return mock.getPaperStatus();
 }
 
 // ─── Multi-Symbol Feed Status (Phase 8B) ─────────────────────────────
 
 export async function fetchMarketFeedStatus(): Promise<SymbolFeedStatus[]> {
-  // Phase 8C: Real feed state from FeedManager
   const feedManager = getFeedManager();
   return feedManager.getFeedStatusesForApi();
 }
@@ -550,20 +544,14 @@ export async function fetchFeedStatus(): Promise<FeedStatusResponse> {
 
 // ─── Real-Time Market Snapshot (Phase 8D) ──────────────────────────
 
-/**
- * Generate a real-time MarketState from FeedManager data.
- * Uses actual WebSocket kline data — no Math.random().
- */
 export function generateRealtimeMarketState(symbol: string): ReturnType<typeof generateMarketState> | null {
   const feedManager = getFeedManager();
   const snapshot = feedManager.getMarketSnapshot(symbol);
   if (!snapshot || snapshot.price <= 0) return null;
   if (snapshot.feedState === "OFFLINE" || snapshot.feedState === "STALE") {
-    // Offline/stale data should not drive decisions
     return null;
   }
   if (snapshot.klines.length < 2) {
-    // Not enough klines for indicator calculation — use snapshot with minimal data
     return null;
   }
 
@@ -583,10 +571,6 @@ export function generateRealtimeMarketState(symbol: string): ReturnType<typeof g
   });
 }
 
-/**
- * Update the Runtime Intelligence engine with real-time market data.
- * Returns true if update was successful, false if data insufficient.
- */
 export function updateRuntimeWithRealtimeData(symbol: string): boolean {
   const marketState = generateRealtimeMarketState(symbol);
   if (!marketState) return false;
@@ -631,7 +615,7 @@ export async function fetchCandles(): Promise<Candle[]> {
 // ─── Health ───────────────────────────────────────────────────────────
 
 export async function fetchHealth() {
-  const db = getDataSource() === "database";
+  const db = (await getDataSource()) === "database";
 
   return {
     status: "healthy" as const,

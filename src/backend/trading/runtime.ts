@@ -119,14 +119,14 @@ let _running = false;
 
 // ─── Runtime Loop ────────────────────────────────────────────────
 
-function tick(): void {
+async function tick(): Promise<void> {
   if (!_orchestrator) return;
 
   _stats.tickCount++;
   _stats.lastTickAt = Date.now();
 
   try {
-    const results = _orchestrator.processRealtimeUpdate();
+    const results = await _orchestrator.processRealtimeUpdate();
     const processed = results.filter((r) => r.reason === "OK").length;
     const skipped = results.filter((r) => r.reason === "OFFLINE/STALE/insufficient_data").length;
     const errored = results.filter((r) => r.reason === "ERROR").length;
@@ -143,7 +143,6 @@ function tick(): void {
     }
 
     // Aggregate decision-level metrics and record events
-    // Per-symbol try/catch ensures one symbol's error doesn't prevent others from being recorded
     for (const r of results) {
       try {
         const sym = r.symbol;
@@ -170,7 +169,6 @@ function tick(): void {
         }
 
         if (r.reason !== "OK" || !r.result) {
-          // Skipped symbol
           _events.push({
             timestamp: Date.now(),
             tickNumber: _stats.tickCount,
@@ -259,7 +257,7 @@ function tick(): void {
  *
  * Safe to call multiple times — the singleton and interval are created only once.
  */
-export function startTradingRuntime(): TradingOrchestrator {
+export async function startTradingRuntime(): Promise<TradingOrchestrator> {
   if (_running) {
     return _orchestrator!;
   }
@@ -268,11 +266,11 @@ export function startTradingRuntime(): TradingOrchestrator {
   _running = true;
   _stats.startedAt = Date.now();
 
-  // Run first tick immediately
-  tick();
+  // Run first tick immediately and wait for it
+  await tick();
 
   // Start periodic loop
-  _intervalId = setInterval(tick, TICK_INTERVAL_MS);
+  _intervalId = setInterval(() => tick().catch(err => logger.error("trading-runtime", `Tick error: ${err}`)), TICK_INTERVAL_MS);
 
   logger.info("trading-runtime", "Trading runtime started (PAPER MODE, 12 symbols, 15s tick)");
   return _orchestrator;
@@ -352,8 +350,6 @@ function _getOrCreatePerSymbol(symbol: string): PerSymbolStats {
   }
   return ps;
 }
-
-
 
 // ─── Runtime Snapshot ───────────────────────────────────────────
 

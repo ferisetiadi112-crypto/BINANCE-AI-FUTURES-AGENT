@@ -1,4 +1,4 @@
-import { getDatabase } from "../database";
+import { dbQueryOne, dbQuery, dbExecute } from "../database/adapter";
 
 export type SystemConfigRecord = {
   key: string;
@@ -8,38 +8,40 @@ export type SystemConfigRecord = {
 };
 
 export const systemConfigRepository = {
-  get(key: string): string | undefined {
-    const result = getDatabase()
-      .prepare("SELECT value FROM system_config WHERE key = ?")
-      .get(key) as { value: string } | undefined;
-    return result?.value;
+  async get(key: string): Promise<string | undefined> {
+    const row = await dbQueryOne(
+      "SELECT value FROM system_config WHERE key = $1",
+      [key]
+    );
+    return row?.["value"] as string | undefined;
   },
 
-  getNumber(key: string, defaultValue: number): number {
-    const value = this.get(key);
+  async getNumber(key: string, defaultValue: number): Promise<number> {
+    const value = await this.get(key);
     return value !== undefined ? Number(value) : defaultValue;
   },
 
-  getBoolean(key: string, defaultValue: boolean): boolean {
-    const value = this.get(key);
+  async getBoolean(key: string, defaultValue: boolean): Promise<boolean> {
+    const value = await this.get(key);
     if (value === undefined) return defaultValue;
     return value === "true" || value === "1";
   },
 
-  getAll(): SystemConfigRecord[] {
-    return getDatabase()
-      .prepare("SELECT * FROM system_config ORDER BY key")
-      .all() as SystemConfigRecord[];
+  async getAll(): Promise<SystemConfigRecord[]> {
+    const rows = await dbQuery("SELECT * FROM system_config ORDER BY key");
+    return rows as unknown as SystemConfigRecord[];
   },
 
-  set(key: string, value: string, description?: string): void {
-    getDatabase().prepare(`
-      INSERT OR REPLACE INTO system_config (key, value, description, updated_at)
-      VALUES (?, ?, COALESCE(?, ''), datetime('now'))
-    `).run(key, value, description || "");
+  async set(key: string, value: string, description?: string): Promise<void> {
+    await dbExecute(
+      `INSERT INTO system_config (key, value, description, updated_at)
+       VALUES ($1, $2, $3, NOW()::TEXT)
+       ON CONFLICT (key) DO UPDATE SET value = $2, description = $3, updated_at = NOW()::TEXT`,
+      [key, value, description || ""]
+    );
   },
 
-  getConfig(): {
+  async getConfig(): Promise<{
     initialCapital: number;
     dailyProfitCap: number;
     dailyLossLimit: number;
@@ -47,15 +49,29 @@ export const systemConfigRepository = {
     paperTrading: boolean;
     tradingEnabled: boolean;
     binanceTestnet: boolean;
-  } {
+  }> {
+    const rows = await dbQuery("SELECT * FROM system_config ORDER BY key");
+    const map = new Map<string, string>();
+    for (const r of rows) map.set(r["key"] as string, r["value"] as string);
+
+    const num = (k: string, d: number) => {
+      const v = map.get(k);
+      return v !== undefined ? Number(v) : d;
+    };
+    const bool = (k: string, d: boolean) => {
+      const v = map.get(k);
+      if (v === undefined) return d;
+      return v === "true" || v === "1";
+    };
+
     return {
-      initialCapital: this.getNumber("initial_capital", 5.0),
-      dailyProfitCap: this.getNumber("daily_profit_cap", 0.5),
-      dailyLossLimit: this.getNumber("daily_loss_limit", 0.5),
-      maxLeverage: this.getNumber("max_leverage", 10),
-      paperTrading: this.getBoolean("paper_trading", true),
-      tradingEnabled: this.getBoolean("trading_enabled", false),
-      binanceTestnet: this.getBoolean("binance_testnet", false),
+      initialCapital: num("initial_capital", 5.0),
+      dailyProfitCap: num("daily_profit_cap", 0.5),
+      dailyLossLimit: num("daily_loss_limit", 0.5),
+      maxLeverage: num("max_leverage", 10),
+      paperTrading: bool("paper_trading", true),
+      tradingEnabled: bool("trading_enabled", false),
+      binanceTestnet: bool("binance_testnet", false),
     };
   },
 };

@@ -35,9 +35,19 @@ const DEFAULT_SYMBOLS: SymbolConfig[] = [
 
 let symbolCache: SymbolConfig[] | null = null;
 
-export function getSymbolUniverse(): SymbolConfig[] {
+/**
+ * Synchronous version that uses cached data.
+ * Use only when async is not possible (constructor, timer callbacks).
+ * Falls back to defaults if cache is empty.
+ */
+export function getEnabledSymbolsSync(): SymbolConfig[] {
+  if (symbolCache) return symbolCache.filter(s => s.enabled);
+  return DEFAULT_SYMBOLS.filter(s => s.enabled);
+}
+
+export async function getSymbolUniverse(): Promise<SymbolConfig[]> {
   if (symbolCache) return symbolCache;
-  const configStr = systemConfigRepository.get("symbol_universe");
+  const configStr = await systemConfigRepository.get("symbol_universe");
   if (configStr) {
     try {
       symbolCache = JSON.parse(configStr) as SymbolConfig[];
@@ -48,24 +58,28 @@ export function getSymbolUniverse(): SymbolConfig[] {
   return symbolCache;
 }
 
-export function getEnabledSymbols(): SymbolConfig[] {
-  return getSymbolUniverse().filter(s => s.enabled);
+export async function getEnabledSymbols(): Promise<SymbolConfig[]> {
+  const universe = await getSymbolUniverse();
+  return universe.filter(s => s.enabled);
 }
 
-export function getSymbolConfig(symbol: string): SymbolConfig | undefined {
-  return getSymbolUniverse().find(s => s.symbol === symbol);
+export async function getSymbolConfig(symbol: string): Promise<SymbolConfig | undefined> {
+  const universe = await getSymbolUniverse();
+  return universe.find(s => s.symbol === symbol);
 }
 
-export function isSymbolEnabled(symbol: string): boolean {
-  return getSymbolConfig(symbol)?.enabled ?? false;
+export async function isSymbolEnabled(symbol: string): Promise<boolean> {
+  const config = await getSymbolConfig(symbol);
+  return config?.enabled ?? false;
 }
 
-export function getPrimarySymbol(): string {
-  return getEnabledSymbols()[0]?.symbol || "BTCUSDT";
+export async function getPrimarySymbol(): Promise<string> {
+  const enabled = await getEnabledSymbols();
+  return enabled[0]?.symbol || "BTCUSDT";
 }
 
-export function updateSymbolConfig(symbol: string, updates: { name?: string; enabled?: boolean; minVolume?: number; intervals?: string[]; tier?: SymbolTier }): void {
-  const universe = getSymbolUniverse();
+export async function updateSymbolConfig(symbol: string, updates: { name?: string; enabled?: boolean; minVolume?: number; intervals?: string[]; tier?: SymbolTier }): Promise<void> {
+  const universe = await getSymbolUniverse();
   const index = universe.findIndex(s => s.symbol === symbol);
   if (index >= 0) {
     const existing = universe[index]!;
@@ -88,21 +102,22 @@ export function updateSymbolConfig(symbol: string, updates: { name?: string; ena
       ...updates,
     });
   }
-  systemConfigRepository.set("symbol_universe", JSON.stringify(universe));
+  await systemConfigRepository.set("symbol_universe", JSON.stringify(universe));
   symbolCache = universe;
 }
 
-export function getSymbolCount(): { total: number; enabled: number } {
-  const universe = getSymbolUniverse();
+export async function getSymbolCount(): Promise<{ total: number; enabled: number }> {
+  const universe = await getSymbolUniverse();
   return { total: universe.length, enabled: universe.filter(s => s.enabled).length };
 }
 
-export function getSymbolsByTier(tier: SymbolTier): SymbolConfig[] {
-  return getEnabledSymbols().filter(s => s.tier === tier);
+export async function getSymbolsByTier(tier: SymbolTier): Promise<SymbolConfig[]> {
+  const enabled = await getEnabledSymbols();
+  return enabled.filter(s => s.tier === tier);
 }
 
-export function getTierCounts(): Record<SymbolTier, { total: number; enabled: number }> {
-  const universe = getSymbolUniverse();
+export async function getTierCounts(): Promise<Record<SymbolTier, { total: number; enabled: number }>> {
+  const universe = await getSymbolUniverse();
   const tiers: SymbolTier[] = ["T1", "T2", "T3"];
   const result: Record<SymbolTier, { total: number; enabled: number }> = {
     T1: { total: 0, enabled: 0 },

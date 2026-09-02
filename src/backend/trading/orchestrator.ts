@@ -77,16 +77,16 @@ export class TradingOrchestrator {
 
   // ─── Process Market Update ───────────────────────────────────────
 
-  processMarketUpdate(marketState: MarketState): {
+  async processMarketUpdate(marketState: MarketState): Promise<{
     decision: AiDecision;
     riskResult: { approved: boolean; reason: string };
     trade: PaperTrade | null;
-  } {
+  }> {
     this.state.marketState = marketState;
     this.state.feedStatus = marketState.feedStatus;
 
     // Phase 9D: Sync wallet balance to Risk Engine
-    const walletBalance = walletRepository.getBalance();
+    const walletBalance = await walletRepository.getBalance();
     this.riskEngine.setWalletBalance(walletBalance);
 
     // 1. Generate AI Decision
@@ -125,7 +125,7 @@ export class TradingOrchestrator {
 
     // Phase 9D: Log guardrail event for LLM path
     if (riskResult.approved && decision.direction !== "NO_TRADE") {
-      walletRepository.logGuardrailEvent(
+      await walletRepository.logGuardrailEvent(
         "TRADE_ALLOWED",
         "INFO",
         `[LLM] ${decision.direction} ${decision.symbol} — ${riskResult.reason}`,
@@ -134,7 +134,7 @@ export class TradingOrchestrator {
       );
     } else if (!riskResult.approved) {
       const isInsufficient = riskResult.reason.includes("Insufficient wallet");
-      walletRepository.logGuardrailEvent(
+      await walletRepository.logGuardrailEvent(
         isInsufficient ? "INSUFFICIENT_FUNDS" : "TRADE_BLOCKED",
         isInsufficient ? "ERROR" : "WARN",
         `[LLM] ${decision.direction} ${decision.symbol} — ${riskResult.reason}`,
@@ -169,23 +169,20 @@ export class TradingOrchestrator {
 
     // 6. Record Experience (Phase 5: AI Learning)
     if (decision.direction === "NO_TRADE") {
-      recordNoTradeExperience(decision, marketState, riskResult);
+      await recordNoTradeExperience(decision, marketState, riskResult);
     } else {
-      recordTradeExperience(decision, marketState, trade, riskResult);
+      await recordTradeExperience(decision, marketState, trade, riskResult);
     }
 
     // 7. Derive Lessons periodically (every 10 actual experiences)
-    // experienceCount tracks actual experience records created, not just symbols processed
     this.experienceCount++;
     if (this.experienceCount % 10 === 0) {
       try {
-        // Fetch recent experiences from database — these are actual persisted records
-        const recentExperiences = getRecentExperiences(50);
+        const recentExperiences = await getRecentExperiences(50);
         if (recentExperiences.length > 0) {
-          deriveLessons(recentExperiences);
+          await deriveLessons(recentExperiences);
         }
       } catch (err) {
-        // Learning failure must never crash the trading runtime
         logger.error("orchestrator", `Lesson derivation failed: ${err}`);
       }
     }
@@ -214,7 +211,7 @@ export class TradingOrchestrator {
     this.state.feedStatus = marketState.feedStatus;
 
     // Phase 9D: Sync wallet balance to Risk Engine
-    const walletBalance = walletRepository.getBalance();
+    const walletBalance = await walletRepository.getBalance();
     this.riskEngine.setWalletBalance(walletBalance);
 
     // 1. Generate LLM Decision (with fallback to rule-based)
@@ -273,7 +270,7 @@ export class TradingOrchestrator {
 
     // Phase 9D: Log guardrail event for LLM path
     if (riskResult.approved && decision.direction !== "NO_TRADE") {
-      walletRepository.logGuardrailEvent(
+      await walletRepository.logGuardrailEvent(
         "TRADE_ALLOWED",
         "INFO",
         `[LLM] ${decision.direction} ${decision.symbol} — ${riskResult.reason}`,
@@ -282,7 +279,7 @@ export class TradingOrchestrator {
       );
     } else if (!riskResult.approved) {
       const isInsufficient = riskResult.reason.includes("Insufficient wallet");
-      walletRepository.logGuardrailEvent(
+      await walletRepository.logGuardrailEvent(
         isInsufficient ? "INSUFFICIENT_FUNDS" : "TRADE_BLOCKED",
         isInsufficient ? "ERROR" : "WARN",
         `[LLM] ${decision.direction} ${decision.symbol} — ${riskResult.reason}`,
@@ -317,18 +314,18 @@ export class TradingOrchestrator {
 
     // 6. Record Experience (Phase 5: AI Learning)
     if (decision.direction === "NO_TRADE") {
-      recordNoTradeExperience(decision, marketState, riskResult);
+      await recordNoTradeExperience(decision, marketState, riskResult);
     } else {
-      recordTradeExperience(decision, marketState, trade, riskResult);
+      await recordTradeExperience(decision, marketState, trade, riskResult);
     }
 
     // 7. Derive Lessons periodically (every 10 actual experiences)
     this.experienceCount++;
     if (this.experienceCount % 10 === 0) {
       try {
-        const recentExperiences = getRecentExperiences(50);
+        const recentExperiences = await getRecentExperiences(50);
         if (recentExperiences.length > 0) {
-          deriveLessons(recentExperiences);
+          await deriveLessons(recentExperiences);
         }
       } catch (err) {
         logger.error("orchestrator", `Lesson derivation failed: ${err}`);
@@ -349,12 +346,12 @@ export class TradingOrchestrator {
    *
    * Returns results for symbols where real-time data was available.
    */
-  processRealtimeUpdate(): {
+  async processRealtimeUpdate(): Promise<{
     symbol: string;
     result: { decision: AiDecision; riskResult: { approved: boolean; reason: string }; trade: PaperTrade | null } | null;
     reason: string;
-  }[] {
-    const symbols = getEnabledSymbols();
+  }[]> {
+    const symbols = await getEnabledSymbols();
     const results: {
       symbol: string;
       result: { decision: AiDecision; riskResult: { approved: boolean; reason: string }; trade: PaperTrade | null } | null;
@@ -369,7 +366,7 @@ export class TradingOrchestrator {
           continue;
         }
 
-        const result = this.processMarketUpdate(marketState);
+        const result = await this.processMarketUpdate(marketState);
         results.push({ symbol: s.symbol, result, reason: "OK" });
       } catch (err) {
         logger.error("orchestrator", `Error processing ${s.symbol}: ${err}`);
@@ -411,8 +408,8 @@ export class TradingOrchestrator {
   /**
    * Get enabled symbols from the symbol universe.
    */
-  getEnabledSymbols() {
-    return getEnabledSymbols();
+  async getEnabledSymbols() {
+    return await getEnabledSymbols();
   }
 
   /**

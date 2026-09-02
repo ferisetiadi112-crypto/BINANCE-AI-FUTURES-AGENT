@@ -4,6 +4,39 @@ import type { AiDecision, PaperTrade } from "./types";
 import type { MarketState } from "../runtime/types";
 import { getDatabase } from "../database";
 
+// Helper to create in-memory test database
+const createTestDatabase = () => {
+  const Database = require('better-sqlite3');
+  const db = new Database(':memory:');
+  // Create necessary tables
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ai_experiences (
+      id TEXT PRIMARY KEY,
+      decision_id TEXT,
+      trade_id TEXT,
+      symbol TEXT,
+      timestamp INTEGER,
+      market_regime TEXT,
+      strategy TEXT,
+      direction TEXT,
+      confidence REAL,
+      entry_price REAL,
+      exit_price REAL,
+      duration INTEGER,
+      fees REAL,
+      slippage REAL,
+      gross_pnl REAL,
+      net_pnl REAL,
+      outcome TEXT,
+      market_context TEXT,
+      decision_version TEXT,
+      model_version TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
+  return db;
+};
+
 const mockMarketState: MarketState = {
   symbol: "BTCUSDT",
   timestamp: Date.now(),
@@ -72,9 +105,9 @@ const mockTrade: PaperTrade = {
 
 describe("Experience Engine", () => {
   describe("recordTradeExperience", () => {
-    it("records a winning trade experience", () => {
+    it("records a winning trade experience", async () => {
       const riskResult = { approved: true, reason: "All checks passed" };
-      const experience = recordTradeExperience(mockDecision, mockMarketState, mockTrade, riskResult);
+      const experience = await recordTradeExperience(mockDecision, mockMarketState, mockTrade, riskResult);
 
       expect(experience).toBeDefined();
       expect(experience.id).toContain("EXP-");
@@ -89,10 +122,10 @@ describe("Experience Engine", () => {
       expect(experience.marketContext.symbol).toBe("BTCUSDT");
     });
 
-    it("records a losing trade experience", () => {
+    it("records a losing trade experience", async () => {
       const losingTrade = { ...mockTrade, id: "PAPER-TRD-EXP-002", pnl: -0.03 };
       const riskResult = { approved: true, reason: "All checks passed" };
-      const experience = recordTradeExperience(
+      const experience = await recordTradeExperience(
         { ...mockDecision, id: "DEC-TEST-EXP-002" },
         mockMarketState,
         losingTrade,
@@ -103,10 +136,10 @@ describe("Experience Engine", () => {
       expect(experience.netPnl).toBe(-0.03);
     });
 
-    it("records a breakeven trade experience", () => {
+    it("records a breakeven trade experience", async () => {
       const breakevenTrade = { ...mockTrade, id: "PAPER-TRD-EXP-003", pnl: 0 };
       const riskResult = { approved: true, reason: "All checks passed" };
-      const experience = recordTradeExperience(
+      const experience = await recordTradeExperience(
         { ...mockDecision, id: "DEC-TEST-EXP-003" },
         mockMarketState,
         breakevenTrade,
@@ -117,9 +150,9 @@ describe("Experience Engine", () => {
       expect(experience.netPnl).toBe(0);
     });
 
-    it("records a cancelled experience when risk rejects", () => {
+    it("records a cancelled experience when risk rejects", async () => {
       const riskResult = { approved: false, reason: "Daily loss limit reached" };
-      const experience = recordTradeExperience(
+      const experience = await recordTradeExperience(
         { ...mockDecision, id: "DEC-TEST-EXP-004" },
         mockMarketState,
         null,
@@ -130,9 +163,9 @@ describe("Experience Engine", () => {
       expect(experience.tradeId).toBeNull();
     });
 
-    it("captures full market context", () => {
+    it("captures full market context", async () => {
       const riskResult = { approved: true, reason: "All checks passed" };
-      const experience = recordTradeExperience(mockDecision, mockMarketState, mockTrade, riskResult);
+      const experience = await recordTradeExperience(mockDecision, mockMarketState, mockTrade, riskResult);
 
       expect(experience.marketContext.price).toBe(63000);
       expect(experience.marketContext.trend).toBe("UP");
@@ -144,10 +177,10 @@ describe("Experience Engine", () => {
   });
 
   describe("recordNoTradeExperience", () => {
-    it("records a no-trade experience", () => {
+    it("records a no-trade experience", async () => {
       const noTradeDecision = { ...mockDecision, id: "DEC-TEST-NT-001", direction: "NO_TRADE" as const, confidence: 0.2 };
       const riskResult = { approved: true, reason: "NO_TRADE — no action required" };
-      const experience = recordNoTradeExperience(noTradeDecision, mockMarketState, riskResult);
+      const experience = await recordNoTradeExperience(noTradeDecision, mockMarketState, riskResult);
 
       expect(experience).toBeDefined();
       expect(experience.direction).toBe("NO_TRADE");
@@ -156,18 +189,18 @@ describe("Experience Engine", () => {
       expect(experience.confidence).toBe(0.2);
     });
 
-    it("records no-trade when risk rejects", () => {
+    it("records no-trade when risk rejects", async () => {
       const noTradeDecision = { ...mockDecision, id: "DEC-TEST-NT-002", direction: "NO_TRADE" as const };
       const riskResult = { approved: false, reason: "System locked" };
-      const experience = recordNoTradeExperience(noTradeDecision, mockMarketState, riskResult);
+      const experience = await recordNoTradeExperience(noTradeDecision, mockMarketState, riskResult);
 
       expect(experience.outcome).toBe("NO_TRADE_RISK_REJECTED");
     });
 
-    it("captures market context for no-trade", () => {
+    it("captures market context for no-trade", async () => {
       const noTradeDecision = { ...mockDecision, id: "DEC-TEST-NT-003", direction: "NO_TRADE" as const, confidence: 0.15 };
       const riskResult = { approved: true, reason: "NO_TRADE" };
-      const experience = recordNoTradeExperience(noTradeDecision, mockMarketState, riskResult);
+      const experience = await recordNoTradeExperience(noTradeDecision, mockMarketState, riskResult);
 
       expect(experience.marketContext).toBeDefined();
       expect(experience.marketContext.symbol).toBe("BTCUSDT");

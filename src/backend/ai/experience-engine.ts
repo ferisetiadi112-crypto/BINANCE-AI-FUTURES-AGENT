@@ -14,11 +14,13 @@
  * Key Principle:
  *   AI must learn from evidence, not just from trade count.
  *   Every experience includes full market context for analysis.
+ *
+ * Database: Async via PostgreSQL adapter (dbQuery/dbExecute).
  */
 
 import type { AiDecision, PaperTrade, StrategyName } from "./types";
 import type { MarketState } from "../runtime/types";
-import { getDatabase } from "../database";
+import { dbQuery, dbQueryOne, dbExecute } from "../database";
 import { logger } from "../logger";
 
 // ─── Experience Types ───────────────────────────────────────────────
@@ -75,12 +77,12 @@ export type TradeExperience = {
 
 let experienceCounter = 0;
 
-export function recordTradeExperience(
+export async function recordTradeExperience(
   decision: AiDecision,
   marketState: MarketState,
   trade: PaperTrade | null,
   riskResult: { approved: boolean; reason: string },
-): TradeExperience {
+): Promise<TradeExperience> {
   experienceCounter++;
 
   // Build market context snapshot
@@ -120,7 +122,7 @@ export function recordTradeExperience(
     slippage: trade?.slippage || null,
     grossPnl: trade ? trade.pnl + (trade.fees || 0) : null,
     netPnl: trade?.pnl ?? null,
-    drawdown: null, // Calculated if needed
+    drawdown: null,
     outcome,
     marketContext,
     decisionVersion: decision.decisionVersion,
@@ -128,7 +130,7 @@ export function recordTradeExperience(
   };
 
   // Persist to database
-  persistExperience(experience);
+  await persistExperience(experience);
 
   // Log
   const outcomeStr = outcome.padEnd(20);
@@ -140,11 +142,11 @@ export function recordTradeExperience(
   return experience;
 }
 
-export function recordNoTradeExperience(
+export async function recordNoTradeExperience(
   decision: AiDecision,
   marketState: MarketState,
   riskResult: { approved: boolean; reason: string },
-): TradeExperience {
+): Promise<TradeExperience> {
   experienceCounter++;
 
   // Build market context snapshot
@@ -192,7 +194,7 @@ export function recordNoTradeExperience(
   };
 
   // Persist to database
-  persistExperience(experience);
+  await persistExperience(experience);
 
   // Log
   logger.info(
@@ -210,22 +212,18 @@ function determineOutcome(
   trade: PaperTrade | null,
   riskResult: { approved: boolean; reason: string },
 ): TradeOutcome {
-  // Invalid decision
   if (!decision.id || !decision.symbol) {
     return "INVALID";
   }
 
-  // Risk rejected
   if (!riskResult.approved) {
     return "CANCELLED";
   }
 
-  // No trade executed
   if (!trade) {
     return "NO_TRADE_SKIPPED";
   }
 
-  // Trade executed - determine win/loss/breakeven
   if (trade.pnl > 0.0001) {
     return "WIN";
   } else if (trade.pnl < -0.0001) {
@@ -238,49 +236,46 @@ function determineOutcome(
 function determineNoTradeOutcome(
   riskResult: { approved: boolean; reason: string },
 ): TradeOutcome {
-  // Risk rejected the no-trade (shouldn't happen, but handle it)
   if (!riskResult.approved) {
     return "NO_TRADE_RISK_REJECTED";
   }
-
-  // No-trade was skipped (decision was NO_TRADE, risk approved)
   return "NO_TRADE_SKIPPED";
 }
 
 // ─── Database Persistence ───────────────────────────────────────────
 
-function persistExperience(experience: TradeExperience): void {
+async function persistExperience(experience: TradeExperience): Promise<void> {
   try {
-    const db = getDatabase();
-    db.prepare(`
-      INSERT INTO trade_experiences (
+    await dbExecute(
+      `INSERT INTO trade_experiences (
         id, decision_id, trade_id, symbol, timestamp, market_regime,
         strategy, direction, confidence, entry_price, exit_price,
         duration, fees, slippage, gross_pnl, net_pnl, drawdown,
         outcome, market_context, decision_version, model_version
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      experience.id,
-      experience.decisionId,
-      experience.tradeId,
-      experience.symbol,
-      experience.timestamp,
-      experience.marketRegime,
-      experience.strategy,
-      experience.direction,
-      experience.confidence,
-      experience.entryPrice,
-      experience.exitPrice,
-      experience.duration,
-      experience.fees,
-      experience.slippage,
-      experience.grossPnl,
-      experience.netPnl,
-      experience.drawdown,
-      experience.outcome,
-      JSON.stringify(experience.marketContext),
-      experience.decisionVersion,
-      experience.modelVersion,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+      [
+        experience.id,
+        experience.decisionId,
+        experience.tradeId,
+        experience.symbol,
+        experience.timestamp,
+        experience.marketRegime,
+        experience.strategy,
+        experience.direction,
+        experience.confidence,
+        experience.entryPrice,
+        experience.exitPrice,
+        experience.duration,
+        experience.fees,
+        experience.slippage,
+        experience.grossPnl,
+        experience.netPnl,
+        experience.drawdown,
+        experience.outcome,
+        JSON.stringify(experience.marketContext),
+        experience.decisionVersion,
+        experience.modelVersion,
+      ],
     );
   } catch (error) {
     logger.error("experience-engine", `Failed to persist experience: ${error}`);
@@ -289,12 +284,12 @@ function persistExperience(experience: TradeExperience): void {
 
 // ─── Query Functions ────────────────────────────────────────────────
 
-export function getRecentExperiences(limit: number = 50): TradeExperience[] {
+export async function getRecentExperiences(limit: number = 50): Promise<TradeExperience[]> {
   try {
-    const db = getDatabase();
-    const rows = db.prepare(`
-      SELECT * FROM trade_experiences ORDER BY timestamp DESC LIMIT ?
-    `).all(limit) as Array<Record<string, unknown>>;
+    const rows = await dbQuery(
+      `SELECT * FROM trade_experiences ORDER BY timestamp DESC LIMIT $1`,
+      [limit],
+    );
 
     return rows.map(row => ({
       id: row['id'] as string,
@@ -325,12 +320,12 @@ export function getRecentExperiences(limit: number = 50): TradeExperience[] {
   }
 }
 
-export function getExperiencesByOutcome(outcome: TradeOutcome): TradeExperience[] {
+export async function getExperiencesByOutcome(outcome: TradeOutcome): Promise<TradeExperience[]> {
   try {
-    const db = getDatabase();
-    const rows = db.prepare(`
-      SELECT * FROM trade_experiences WHERE outcome = ? ORDER BY timestamp DESC
-    `).all(outcome) as Array<Record<string, unknown>>;
+    const rows = await dbQuery(
+      `SELECT * FROM trade_experiences WHERE outcome = $1 ORDER BY timestamp DESC`,
+      [outcome],
+    );
 
     return rows.map(row => ({
       id: row['id'] as string,
@@ -361,7 +356,7 @@ export function getExperiencesByOutcome(outcome: TradeOutcome): TradeExperience[
   }
 }
 
-export function getExperienceStats(): {
+export async function getExperienceStats(): Promise<{
   totalExperiences: number;
   totalTrades: number;
   totalNoTrades: number;
@@ -371,61 +366,60 @@ export function getExperienceStats(): {
   averageConfidence: number;
   byStrategy: Record<string, { count: number; winRate: number; pnl: number }>;
   byRegime: Record<string, { count: number; winRate: number; pnl: number }>;
-} {
+}> {
   try {
-    const db = getDatabase();
-    const total = db.prepare("SELECT COUNT(*) as count FROM trade_experiences").get() as { count: number };
-    const trades = db.prepare("SELECT COUNT(*) as count FROM trade_experiences WHERE direction != 'NO_TRADE'").get() as { count: number };
-    const noTrades = db.prepare("SELECT COUNT(*) as count FROM trade_experiences WHERE direction = 'NO_TRADE'").get() as { count: number };
+    const total = await dbQueryOne("SELECT COUNT(*) as count FROM trade_experiences");
+    const trades = await dbQueryOne("SELECT COUNT(*) as count FROM trade_experiences WHERE direction != 'NO_TRADE'");
+    const noTrades = await dbQueryOne("SELECT COUNT(*) as count FROM trade_experiences WHERE direction = 'NO_TRADE'");
 
-    const wins = db.prepare("SELECT COUNT(*) as count FROM trade_experiences WHERE outcome = 'WIN'").get() as { count: number };
-    const totalPnlResult = db.prepare("SELECT SUM(net_pnl) as total FROM trade_experiences WHERE net_pnl IS NOT NULL").get() as { total: number };
-    const avgConfidence = db.prepare("SELECT AVG(confidence) as avg FROM trade_experiences").get() as { avg: number };
+    const wins = await dbQueryOne("SELECT COUNT(*) as count FROM trade_experiences WHERE outcome = 'WIN'");
+    const totalPnlResult = await dbQueryOne("SELECT SUM(net_pnl) as total FROM trade_experiences WHERE net_pnl IS NOT NULL");
+    const avgConfidence = await dbQueryOne("SELECT AVG(confidence) as avg FROM trade_experiences");
 
     // By strategy
-    const strategyRows = db.prepare(`
+    const strategyRows = await dbQuery(`
       SELECT strategy, COUNT(*) as count,
              SUM(CASE WHEN outcome = 'WIN' THEN 1 ELSE 0 END) as wins,
              SUM(COALESCE(net_pnl, 0)) as pnl
       FROM trade_experiences
       GROUP BY strategy
-    `).all() as Array<{ strategy: string; count: number; wins: number; pnl: number }>;
+    `);
 
     const byStrategy: Record<string, { count: number; winRate: number; pnl: number }> = {};
     for (const row of strategyRows) {
-      byStrategy[row.strategy] = {
-        count: row.count,
-        winRate: row.count > 0 ? (row.wins / row.count) * 100 : 0,
-        pnl: row.pnl,
+      byStrategy[row['strategy'] as string] = {
+        count: row['count'] as number,
+        winRate: (row['count'] as number) > 0 ? ((row['wins'] as number) / (row['count'] as number)) * 100 : 0,
+        pnl: row['pnl'] as number,
       };
     }
 
     // By regime
-    const regimeRows = db.prepare(`
+    const regimeRows = await dbQuery(`
       SELECT market_regime, COUNT(*) as count,
              SUM(CASE WHEN outcome = 'WIN' THEN 1 ELSE 0 END) as wins,
              SUM(COALESCE(net_pnl, 0)) as pnl
       FROM trade_experiences
       GROUP BY market_regime
-    `).all() as Array<{ market_regime: string; count: number; wins: number; pnl: number }>;
+    `);
 
     const byRegime: Record<string, { count: number; winRate: number; pnl: number }> = {};
     for (const row of regimeRows) {
-      byRegime[row.market_regime] = {
-        count: row.count,
-        winRate: row.count > 0 ? (row.wins / row.count) * 100 : 0,
-        pnl: row.pnl,
+      byRegime[row['market_regime'] as string] = {
+        count: row['count'] as number,
+        winRate: (row['count'] as number) > 0 ? ((row['wins'] as number) / (row['count'] as number)) * 100 : 0,
+        pnl: row['pnl'] as number,
       };
     }
 
     return {
-      totalExperiences: total.count,
-      totalTrades: trades.count,
-      totalNoTrades: noTrades.count,
-      winRate: trades.count > 0 ? (wins.count / trades.count) * 100 : 0,
-      profitFactor: 0, // Calculate if needed
-      totalPnl: totalPnlResult.total || 0,
-      averageConfidence: avgConfidence.avg || 0,
+      totalExperiences: (total?.['count'] as number) || 0,
+      totalTrades: (trades?.['count'] as number) || 0,
+      totalNoTrades: (noTrades?.['count'] as number) || 0,
+      winRate: ((trades?.['count'] as number) || 0) > 0 ? (((wins?.['count'] as number) || 0) / ((trades?.['count'] as number) || 0)) * 100 : 0,
+      profitFactor: 0,
+      totalPnl: (totalPnlResult?.['total'] as number) || 0,
+      averageConfidence: (avgConfidence?.['avg'] as number) || 0,
       byStrategy,
       byRegime,
     };

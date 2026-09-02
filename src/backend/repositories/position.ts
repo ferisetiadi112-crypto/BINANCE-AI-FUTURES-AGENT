@@ -1,4 +1,4 @@
-import { getDatabase } from "../database";
+import { dbQueryOne, dbQuery, dbExecute } from "../database/adapter";
 
 export type PositionRecord = {
   id: string;
@@ -20,40 +20,45 @@ export type PositionRecord = {
 };
 
 export const positionRepository = {
-  getOpen(): PositionRecord[] {
-    return getDatabase()
-      .prepare("SELECT * FROM positions WHERE status = 'OPEN' ORDER BY opened_at DESC")
-      .all() as PositionRecord[];
+  async getOpen(): Promise<PositionRecord[]> {
+    const rows = await dbQuery(
+      "SELECT * FROM positions WHERE status = 'OPEN' ORDER BY opened_at DESC"
+    );
+    return rows as unknown as PositionRecord[];
   },
 
-  getOpenBySymbol(symbol: string): PositionRecord | undefined {
-    return getDatabase()
-      .prepare("SELECT * FROM positions WHERE symbol = ? AND status = 'OPEN' LIMIT 1")
-      .get(symbol) as PositionRecord | undefined;
+  async getOpenBySymbol(symbol: string): Promise<PositionRecord | undefined> {
+    const row = await dbQueryOne(
+      "SELECT * FROM positions WHERE symbol = $1 AND status = 'OPEN' LIMIT 1",
+      [symbol]
+    );
+    return row as PositionRecord | undefined;
   },
 
-  getById(id: string): PositionRecord | undefined {
-    return getDatabase()
-      .prepare("SELECT * FROM positions WHERE id = ?")
-      .get(id) as PositionRecord | undefined;
+  async getById(id: string): Promise<PositionRecord | undefined> {
+    const row = await dbQueryOne("SELECT * FROM positions WHERE id = $1", [id]);
+    return row as PositionRecord | undefined;
   },
 
-  getRecent(limit = 10): PositionRecord[] {
-    return getDatabase()
-      .prepare("SELECT * FROM positions ORDER BY opened_at DESC LIMIT ?")
-      .all(limit) as PositionRecord[];
+  async getRecent(limit = 10): Promise<PositionRecord[]> {
+    const rows = await dbQuery(
+      "SELECT * FROM positions ORDER BY opened_at DESC LIMIT $1",
+      [limit]
+    );
+    return rows as unknown as PositionRecord[];
   },
 
-  getOpenCount(): number {
-    const result = getDatabase()
-      .prepare("SELECT COUNT(*) as count FROM positions WHERE status = 'OPEN'")
-      .get() as { count: number };
-    return result.count;
+  async getOpenCount(): Promise<number> {
+    const result = await dbQueryOne(
+      "SELECT COUNT(*) as count FROM positions WHERE status = 'OPEN'"
+    ) as { count: number } | undefined;
+    return Number(result?.count ?? 0);
   },
 
-  updateMarkPrice(id: string, markPrice: number, unrealizedPnl: number): void {
-    getDatabase()
-      .prepare("UPDATE positions SET mark_price = ?, unrealized_pnl = ? WHERE id = ?")
-      .run(markPrice, unrealizedPnl, id);
+  async updateMarkPrice(id: string, markPrice: number, unrealizedPnl: number): Promise<void> {
+    await dbExecute(
+      "UPDATE positions SET mark_price = $1, unrealized_pnl = $2 WHERE id = $3",
+      [markPrice, unrealizedPnl, id]
+    );
   },
 };

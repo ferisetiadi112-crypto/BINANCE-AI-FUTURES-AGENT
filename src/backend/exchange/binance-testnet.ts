@@ -338,10 +338,10 @@ export class BinanceTestnetClient {
     logger.info("binance-testnet", `Market order: ${side} ${quantity} ${symbol}`);
 
     // Pre-flight: wallet balance check
-    const balance = walletRepository.getBalance();
+    const balance = await walletRepository.getBalance();
     const minBalance = 0.50;
     if (balance < minBalance) {
-      walletRepository.logGuardrailEvent(
+      await walletRepository.logGuardrailEvent(
         "INSUFFICIENT_FUNDS",
         "ERROR",
         `Testnet order blocked: wallet balance $${balance.toFixed(2)} < $${minBalance.toFixed(2)}`,
@@ -363,7 +363,7 @@ export class BinanceTestnetClient {
     });
 
     // Log successful order
-    walletRepository.logGuardrailEvent(
+    await walletRepository.logGuardrailEvent(
       "TRADE_ALLOWED",
       "INFO",
       `Testnet order executed: ${side} ${quantity} ${symbol} (orderId: ${result.orderId})`,

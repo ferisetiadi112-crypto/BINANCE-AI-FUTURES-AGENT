@@ -277,3 +277,18 @@ CREATE TABLE IF NOT EXISTS guardrail_events (
 
 CREATE INDEX IF NOT EXISTS idx_guardrail_events_time ON guardrail_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_guardrail_events_type ON guardrail_events(event_type, created_at DESC);
+
+-- ─── Risk State Persistence (P2) ──────────────────────────────────
+-- Persists Risk Engine state across server restarts.
+-- Key-value store for daily_pnl, is_locked, lock_reason.
+
+CREATE TABLE IF NOT EXISTS risk_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Seed initial risk state
+INSERT OR IGNORE INTO risk_state (key, value) VALUES ('daily_pnl', '0');
+INSERT OR IGNORE INTO risk_state (key, value) VALUES ('is_locked', 'false');
+INSERT OR IGNORE INTO risk_state (key, value) VALUES ('lock_reason', '');

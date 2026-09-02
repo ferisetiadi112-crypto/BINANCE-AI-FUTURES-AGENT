@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { deriveLessons, getRecentLessons, getLessonStats } from "./lesson-engine";
 import type { TradeExperience } from "./experience-engine";
-import { createTestDatabase } from "../database";
 
 const createMockExperience = (overrides: Partial<TradeExperience> = {}): TradeExperience => ({
   id: `EXP-${Date.now()}-${Math.random()}`,
@@ -42,19 +41,19 @@ const createMockExperience = (overrides: Partial<TradeExperience> = {}): TradeEx
 });
 
 describe("Lesson Engine", () => {
-  beforeEach(() => {
-    // Create test database
-    createTestDatabase();
+  beforeEach(async () => {
+    // Create test database if needed
+    // Note: lesson-engine uses its own database connection
   });
 
   describe("deriveLessons", () => {
-    it("returns empty array when insufficient experiences", () => {
+    it("returns empty array when insufficient experiences", async () => {
       const experiences = [createMockExperience()];
-      const lessons = deriveLessons(experiences, 5);
+      const lessons = await deriveLessons(experiences, 5);
       expect(lessons).toEqual([]);
     });
 
-    it("derives regime-based lessons from sufficient experiences", () => {
+    it("derives regime-based lessons from sufficient experiences", async () => {
       // Create 10 experiences in TRENDING_UP regime with high win rate
       const experiences = Array.from({ length: 10 }, (_, i) =>
         createMockExperience({
@@ -65,7 +64,7 @@ describe("Lesson Engine", () => {
         })
       );
 
-      const lessons = deriveLessons(experiences, 5);
+      const lessons = await deriveLessons(experiences, 5);
       expect(lessons.length).toBeGreaterThan(0);
 
       // Should have a regime lesson
@@ -75,7 +74,7 @@ describe("Lesson Engine", () => {
       expect(regimeLesson!.confidence).toBeGreaterThan(0);
     });
 
-    it("derives strategy-based lessons", () => {
+    it("derives strategy-based lessons", async () => {
       // Create 10 experiences with MOMENTUM strategy
       const experiences = Array.from({ length: 10 }, (_, i) =>
         createMockExperience({
@@ -86,13 +85,13 @@ describe("Lesson Engine", () => {
         })
       );
 
-      const lessons = deriveLessons(experiences, 5);
+      const lessons = await deriveLessons(experiences, 5);
       const strategyLesson = lessons.find(l => l.category === "STRATEGY");
       expect(strategyLesson).toBeDefined();
       expect(strategyLesson!.text).toContain("MOMENTUM");
     });
 
-    it("derives confidence-based lessons", () => {
+    it("derives confidence-based lessons", async () => {
       // Create 10 high confidence experiences
       const experiences = Array.from({ length: 10 }, (_, i) =>
         createMockExperience({
@@ -102,13 +101,13 @@ describe("Lesson Engine", () => {
         })
       );
 
-      const lessons = deriveLessons(experiences, 5);
+      const lessons = await deriveLessons(experiences, 5);
       const confidenceLesson = lessons.find(l => l.category === "CONFIDENCE");
       expect(confidenceLesson).toBeDefined();
       expect(confidenceLesson!.text).toContain("High confidence");
     });
 
-    it("derives risk lessons from NO_TRADE decisions", () => {
+    it("derives risk lessons from NO_TRADE decisions", async () => {
       // Create experiences with some NO_TRADE decisions
       const experiences = [
         ...Array.from({ length: 5 }, (_, i) =>
@@ -136,12 +135,12 @@ describe("Lesson Engine", () => {
         ),
       ];
 
-      const lessons = deriveLessons(experiences, 5);
+      const lessons = await deriveLessons(experiences, 5);
       const riskLesson = lessons.find(l => l.category === "RISK");
       expect(riskLesson).toBeDefined();
     });
 
-    it("derives timing lessons from trade duration", () => {
+    it("derives timing lessons from trade duration", async () => {
       // Create experiences with different durations
       const experiences = [
         ...Array.from({ length: 3 }, (_, i) =>
@@ -160,7 +159,7 @@ describe("Lesson Engine", () => {
         ),
       ];
 
-      const lessons = deriveLessons(experiences, 5);
+      const lessons = await deriveLessons(experiences, 5);
       const timingLesson = lessons.find(l => l.category === "TIMING");
       expect(timingLesson).toBeDefined();
       expect(timingLesson!.text).toContain("time-based exits");
@@ -168,7 +167,7 @@ describe("Lesson Engine", () => {
   });
 
   describe("getRecentLessons", () => {
-    it("returns recent lessons", () => {
+    it("returns recent lessons", async () => {
       // Create experiences and derive lessons
       const experiences = Array.from({ length: 10 }, (_, i) =>
         createMockExperience({
@@ -176,16 +175,16 @@ describe("Lesson Engine", () => {
           outcome: i < 8 ? "WIN" : "LOSS",
         })
       );
-      deriveLessons(experiences, 5);
+      await deriveLessons(experiences, 5);
 
-      const lessons = getRecentLessons(10);
+      const lessons = await getRecentLessons(10);
       expect(lessons.length).toBeGreaterThan(0);
     });
   });
 
   describe("getLessonStats", () => {
-    it("returns lesson statistics", () => {
-      const stats = getLessonStats();
+    it("returns lesson statistics", async () => {
+      const stats = await getLessonStats();
       expect(stats).toBeDefined();
       expect(typeof stats.totalLessons).toBe("number");
       expect(typeof stats.latestCycle).toBe("number");

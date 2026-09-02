@@ -3,9 +3,9 @@ import { getDataSource } from "./data-adapter";
 import * as mock from "./mock-data";
 
 describe("Data Adapter", () => {
-  it("returns mock data when no database is available", () => {
+  it("returns mock data when no database is available", async () => {
     // Without a database, the adapter should return mock data
-    const source = getDataSource();
+    const source = await getDataSource();
     expect(source).toBe("mock");
   });
 

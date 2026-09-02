@@ -1,4 +1,4 @@
-import { getDatabase } from "../database";
+import { dbQueryOne, dbQuery } from "../database/adapter";
 
 export type AiLessonRecord = {
   id: string;
@@ -9,25 +9,26 @@ export type AiLessonRecord = {
 };
 
 export const aiLessonRepository = {
-  getAll(): AiLessonRecord[] {
-    return getDatabase()
-      .prepare("SELECT * FROM ai_lessons ORDER BY cycle DESC")
-      .all() as AiLessonRecord[];
+  async getAll(): Promise<AiLessonRecord[]> {
+    const rows = await dbQuery("SELECT * FROM ai_lessons ORDER BY cycle DESC");
+    return rows as unknown as AiLessonRecord[];
   },
 
-  getByCycle(cycle: number): AiLessonRecord | undefined {
-    return getDatabase()
-      .prepare("SELECT * FROM ai_lessons WHERE cycle = ?")
-      .get(cycle) as AiLessonRecord | undefined;
+  async getByCycle(cycle: number): Promise<AiLessonRecord | undefined> {
+    const row = await dbQueryOne(
+      "SELECT * FROM ai_lessons WHERE cycle = $1",
+      [cycle]
+    );
+    return row as AiLessonRecord | undefined;
   },
 
-  count(): number {
-    const result = getDatabase().prepare("SELECT COUNT(*) as count FROM ai_lessons").get() as { count: number };
-    return result.count;
+  async count(): Promise<number> {
+    const result = await dbQueryOne("SELECT COUNT(*) as count FROM ai_lessons") as { count: number } | undefined;
+    return Number(result?.count ?? 0);
   },
 
-  getLatestCycle(): number {
-    const result = getDatabase().prepare("SELECT MAX(cycle) as cycle FROM ai_lessons").get() as { cycle: number };
-    return result.cycle || 0;
+  async getLatestCycle(): Promise<number> {
+    const result = await dbQueryOne("SELECT MAX(cycle) as cycle FROM ai_lessons") as { cycle: number } | undefined;
+    return Number(result?.cycle ?? 0);
   },
 };

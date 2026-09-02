@@ -10,7 +10,6 @@
  */
 
 import type { TradeExperience, TradeOutcome } from "../ai/experience-engine";
-import { getRecentExperiences } from "../ai/experience-engine";
 import { logger } from "../logger";
 
 // ─── Baseline Types ─────────────────────────────────────────────────

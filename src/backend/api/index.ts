@@ -39,11 +39,11 @@ import type { ApiResponse, LLMStatusResponse } from "../../types/api";
 import { bossGuardMiddleware } from "../auth/middleware";
 import { createSessionToken, createSessionCookie, createClearSessionCookie } from "../auth";
 
-function wrap<T>(data: T): ApiResponse<T> {
+async function wrap<T>(data: T): Promise<ApiResponse<T>> {
   return {
     data,
     timestamp: new Date().toISOString(),
-    source: getDataSource(),
+    source: await getDataSource(),
   };
 }
 
@@ -241,7 +241,7 @@ export const getLLMStatus = createServerFn({ method: "GET" }).handler(
 
 export const getWalletStatus = createServerFn({ method: "GET" }).handler(
   async () => {
-    const status = walletRepository.getStatus();
+    const status = await walletRepository.getStatus();
     return wrap(status);
   },
 );
@@ -265,9 +265,9 @@ export const topUpWallet = createServerFn({ method: "POST" })
     const amount = Math.round(data.amount * 100) / 100;
     const note = (typeof data.note === "string" ? data.note : "").slice(0, 500);
 
-    // Execute with server-derived identity
-    const newBalance = walletRepository.topUp(amount, note);
-    walletRepository.logGuardrailEvent(
+    // Execute with server-derived identity (async for PostgreSQL)
+    const newBalance = await walletRepository.topUp(amount, note);
+    await walletRepository.logGuardrailEvent(
       "WALLET_MODIFIED",
       "INFO",
       `Top-up: $${amount.toFixed(2)} by ${session.userId} (boss) — New balance: $${newBalance.toFixed(2)}`,
@@ -297,9 +297,9 @@ export const withdrawFromWallet = createServerFn({ method: "POST" })
     const amount = Math.round(data.amount * 100) / 100;
     const note = (typeof data.note === "string" ? data.note : "").slice(0, 500);
 
-    // Execute with server-derived identity
-    const newBalance = walletRepository.withdraw(amount, note);
-    walletRepository.logGuardrailEvent(
+    // Execute with server-derived identity (async for PostgreSQL)
+    const newBalance = await walletRepository.withdraw(amount, note);
+    await walletRepository.logGuardrailEvent(
       "WALLET_MODIFIED",
       "INFO",
       `Withdrawal: $${amount.toFixed(2)} by ${session.userId} (boss) — New balance: $${newBalance.toFixed(2)}`,
@@ -314,7 +314,7 @@ export const withdrawFromWallet = createServerFn({ method: "POST" })
 
 export const getAuditTrail = createServerFn({ method: "GET" }).handler(
   async () => {
-    const trail = walletRepository.getAuditTrail(50);
+    const trail = await walletRepository.getAuditTrail(50);
     return wrap({ events: trail });
   },
 );
@@ -373,7 +373,7 @@ export const syncTestnetBalance = createServerFn({ method: "POST" })
     const executor = getTestnetExecutor();
     const newBalance = await executor.syncBalance();
     // Log with server-derived identity
-    walletRepository.logGuardrailEvent(
+    await walletRepository.logGuardrailEvent(
       "BALANCE_CHECK",
       "INFO",
       `Balance synced to testnet by ${session.userId} (boss) — New balance: $${newBalance.toFixed(2)}`,
