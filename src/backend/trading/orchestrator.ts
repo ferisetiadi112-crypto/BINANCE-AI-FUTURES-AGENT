@@ -19,11 +19,10 @@
 
 import type { MarketState } from "../runtime/types";
 import type { AiDecision, PaperTrade } from "../ai/types";
-import type { TradeExperience } from "../ai/experience-engine";
 import { generateDecision, validateDecision } from "../ai/decision-engine";
 import { RiskEngine } from "../risk/engine";
 import { PaperTradingEngine } from "../paper/engine";
-import { recordTradeExperience, recordNoTradeExperience } from "../ai/experience-engine";
+import { recordTradeExperience, recordNoTradeExperience, getRecentExperiences } from "../ai/experience-engine";
 import { deriveLessons } from "../ai/lesson-engine";
 import { generateRealtimeMarketState } from "../services/data-adapter";
 import { getEnabledSymbols } from "../market/symbols";
@@ -150,13 +149,20 @@ export class TradingOrchestrator {
       recordTradeExperience(decision, marketState, trade, riskResult);
     }
 
-    // 7. Derive Lessons periodically (every 10 experiences)
+    // 7. Derive Lessons periodically (every 10 actual experiences)
+    // experienceCount tracks actual experience records created, not just symbols processed
     this.experienceCount++;
     if (this.experienceCount % 10 === 0) {
-      // In production, fetch recent experiences from database
-      // For now, we'll use a placeholder array
-      const recentExperiences: TradeExperience[] = [];
-      deriveLessons(recentExperiences);
+      try {
+        // Fetch recent experiences from database — these are actual persisted records
+        const recentExperiences = getRecentExperiences(50);
+        if (recentExperiences.length > 0) {
+          deriveLessons(recentExperiences);
+        }
+      } catch (err) {
+        // Learning failure must never crash the trading runtime
+        logger.error("orchestrator", `Lesson derivation failed: ${err}`);
+      }
     }
 
     this.state.systemStatus = "RUNNING";
