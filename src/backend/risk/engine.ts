@@ -32,6 +32,11 @@ export type RiskConfig = {
   maxOpenPositions: number;
   maxDecisionAge: number; // ms — reject stale decisions
   requireGoodDataQuality: boolean;
+  /**
+   * Minimum wallet balance required to open a new position.
+   * Below this threshold the Risk Engine blocks all trades.
+   */
+  minWalletBalance: number;
 };
 
 const DEFAULT_RISK_CONFIG: RiskConfig = {
@@ -43,6 +48,7 @@ const DEFAULT_RISK_CONFIG: RiskConfig = {
   maxOpenPositions: 3,
   maxDecisionAge: 300_000, // 5 minutes
   requireGoodDataQuality: true,
+  minWalletBalance: 0.50, // Block trades below $0.50
 };
 
 // ─── Risk Engine ──────────────────────────────────────────────────────
@@ -60,13 +66,29 @@ export class RiskEngine {
   private dailyTrades = 0;
   private isLocked = false;
   private lockReason = "";
-  private recentDecisions: RecentDecision[] = [];
+  private recentDecisions: RecentDecision[] = [];  private walletBalance: number;
 
   constructor(config: Partial<RiskConfig> = {}) {
     this.config = { ...DEFAULT_RISK_CONFIG, ...config };
+    this.walletBalance = this.config.initialCapital;
+  }
+
+  // ─── Wallet Balance ─────────────────────────────────────────────
+
+  /**
+   * Update the wallet balance seen by the Risk Engine.
+   * Called by the orchestrator with the actual sandbox wallet balance.
+   */
+  setWalletBalance(balance: number): void {
+    this.walletBalance = balance;
+  }
+
+  getWalletBalance(): number {
+    return this.walletBalance;
   }
 
   // ─── Main Check ──────────────────────────────────────────────────
+
 
   check(
     decision: AiDecision,
@@ -124,6 +146,10 @@ export class RiskEngine {
     // 10. Confidence threshold
     const confidenceCheck = this.checkConfidenceThreshold(decision);
     checks.push(confidenceCheck);
+
+    // 11. Wallet balance check (Phase 9D)
+    const walletCheck = this.checkWalletBalance(decision);
+    checks.push(walletCheck);
 
     // Evaluate all checks
     const allPassed = checks.every(c => c.passed);
@@ -295,6 +321,21 @@ export class RiskEngine {
       name: "confidence_threshold",
       passed: true,
       message: `Confidence: ${(decision.confidence * 100).toFixed(1)}%`,
+    };
+  }
+
+  private checkWalletBalance(decision: AiDecision): RiskCheckResult["checks"][0] {
+    if (this.walletBalance < this.config.minWalletBalance) {
+      return {
+        name: "wallet_balance",
+        passed: false,
+        message: `Insufficient wallet balance: $${this.walletBalance.toFixed(2)} (min: $${this.config.minWalletBalance.toFixed(2)})`,
+      };
+    }
+    return {
+      name: "wallet_balance",
+      passed: true,
+      message: `Wallet balance: $${this.walletBalance.toFixed(2)}`,
     };
   }
 

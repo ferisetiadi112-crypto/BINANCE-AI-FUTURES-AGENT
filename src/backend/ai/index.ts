@@ -5,3 +5,4 @@
 export * from "./types";
 export * from "./strategies";
 export * from "./decision-engine";
+export * as LLM from "./llm";

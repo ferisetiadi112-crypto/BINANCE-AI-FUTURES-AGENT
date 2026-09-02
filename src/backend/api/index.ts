@@ -31,7 +31,11 @@ import {
   getDataSource,
 } from "../services/data-adapter";
 import { getRuntimeSnapshot } from "../trading/runtime";
-import type { ApiResponse } from "../../types/api";
+import { getProviderRegistry } from "../ai/llm/providers";
+import { walletRepository } from "../repositories/wallet";
+import { getTestnetExecutor } from "../exchange/testnet-executor";
+import { isTestnetConfigured } from "../exchange/binance-testnet";
+import type { ApiResponse, LLMStatusResponse } from "../../types/api";
 
 function wrap<T>(data: T): ApiResponse<T> {
   return {
@@ -185,5 +189,130 @@ export const getRuntimeStatus = createServerFn({ method: "GET" }).handler(
   async () => {
     const snapshot = getRuntimeSnapshot();
     return wrap(snapshot);
+  },
+);
+
+// ─── GET /api/llm-status ───────────────────────────────────────
+
+export const getLLMStatus = createServerFn({ method: "GET" }).handler(
+  async () => {
+    const providers = getProviderRegistry();
+    return wrap({
+      providers: providers.map((p) => ({
+        name: p.name,
+        configured: p.isConfigured(),
+      })),
+      routerConfig: {
+        fallbackEnabled: true,
+        totalProviders: providers.length,
+        configuredProviders: providers.filter((p) => p.isConfigured()).length,
+      },
+    });
+  },
+);
+
+// ─── GET /api/wallet-status ─────────────────────────────────────────
+
+export const getWalletStatus = createServerFn({ method: "GET" }).handler(
+  async () => {
+    const status = walletRepository.getStatus();
+    return wrap(status);
+  },
+);
+
+// ─── POST /api/wallet-top-up ────────────────────────────────────────
+
+export const topUpWallet = createServerFn({ method: "POST" })
+  .validator((input: { amount: number; note?: string }) => input)
+  .handler(async ({ data }) => {
+    const newBalance = walletRepository.topUp(data.amount, data.note || "Boss top-up");
+    walletRepository.logGuardrailEvent(
+      "WALLET_MODIFIED",
+      "INFO",
+      `Boss topped up $${data.amount.toFixed(2)} — New balance: $${newBalance.toFixed(2)}`,
+      { type: "TOP_UP", amount: data.amount, note: data.note },
+      newBalance,
+    );
+    return wrap({ balance: newBalance });
+  },
+);
+
+// ─── POST /api/wallet-withdraw ──────────────────────────────────────
+
+export const withdrawFromWallet = createServerFn({ method: "POST" })
+  .validator((input: { amount: number; note?: string }) => input)
+  .handler(async ({ data }) => {
+    const newBalance = walletRepository.withdraw(data.amount, data.note || "Boss withdrawal");
+    walletRepository.logGuardrailEvent(
+      "WALLET_MODIFIED",
+      "INFO",
+      `Boss withdrew $${data.amount.toFixed(2)} — New balance: $${newBalance.toFixed(2)}`,
+      { type: "WITHDRAW", amount: data.amount, note: data.note },
+      newBalance,
+    );
+    return wrap({ balance: newBalance });
+  },
+);
+
+// ─── GET /api/audit-trail ───────────────────────────────────────────
+
+export const getAuditTrail = createServerFn({ method: "GET" }).handler(
+  async () => {
+    const trail = walletRepository.getAuditTrail(50);
+    return wrap({ events: trail });
+  },
+);
+
+// ─── GET /api/testnet-status ───────────────────────────────────────
+
+export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
+  async () => {
+    const executor = getTestnetExecutor();
+    const configured = isTestnetConfigured();
+    let connected = false;
+    let balance = 0;
+    let positions: Array<{
+      symbol: string;
+      side: string;
+      size: number;
+      entryPrice: number;
+      markPrice: number;
+      unrealizedPnl: number;
+      leverage: number;
+    }> = [];
+
+    if (configured) {
+      const client = executor.getClient();
+      if (client) {
+        connected = client.isConnected();
+        if (connected) {
+          try {
+            const snapshot = await executor.getAccountSnapshot();
+            balance = snapshot.balance;
+            positions = snapshot.positions;
+          } catch {
+            // Account query failed — still report connection status
+          }
+        }
+      }
+    }
+
+    return wrap({
+      configured,
+      connected,
+      balance,
+      positions,
+      paperTrading: process.env["PAPER_TRADING"] !== "false",
+    });
+  },
+);
+
+// ─── POST /api/testnet-sync-balance ────────────────────────────────
+
+export const syncTestnetBalance = createServerFn({ method: "POST" }).handler(
+  async () => {
+    const executor = getTestnetExecutor();
+    const newBalance = await executor.syncBalance();
+    return wrap({ balance: newBalance });
   },
 );

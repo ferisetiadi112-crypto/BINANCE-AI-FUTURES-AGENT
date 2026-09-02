@@ -242,3 +242,38 @@ CREATE INDEX IF NOT EXISTS idx_positions_account ON positions(account_id, status
 CREATE INDEX IF NOT EXISTS idx_ai_decisions_time ON ai_decisions(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_risk_events_time ON risk_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_system_events_time ON system_events(created_at DESC);
+
+-- ─── Wallet Transactions (Phase 9D) ───────────────────────────────
+-- Only the Boss (human user) may create top-up or withdraw entries.
+-- The AI trading engine has ZERO permission to modify wallet balance.
+
+CREATE TABLE IF NOT EXISTS wallet_transactions (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  type TEXT NOT NULL CHECK(type IN ('TOP_UP','WITHDRAW')),
+  amount REAL NOT NULL CHECK(amount > 0),
+  balance_before REAL NOT NULL,
+  balance_after REAL NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  initiated_by TEXT NOT NULL DEFAULT 'boss' CHECK(initiated_by IN ('boss','system')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_transactions_account ON wallet_transactions(account_id, created_at DESC);
+
+-- ─── Guardrail Events (Phase 9D) ──────────────────────────────────
+-- Transparent log of every guardrail check, balance validation,
+-- and trade-block reason. Always written before any execution attempt.
+
+CREATE TABLE IF NOT EXISTS guardrail_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL CHECK(event_type IN ('BALANCE_CHECK','TRADE_BLOCKED','TRADE_ALLOWED','INSUFFICIENT_FUNDS','MARKET_UNSTABLE','DAILY_LIMIT_REACHED','WALLET_MODIFIED')),
+  severity TEXT NOT NULL CHECK(severity IN ('INFO','WARN','ERROR','CRITICAL')),
+  message TEXT NOT NULL,
+  details TEXT NOT NULL DEFAULT '{}',
+  balance_snapshot REAL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_guardrail_events_time ON guardrail_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_guardrail_events_type ON guardrail_events(event_type, created_at DESC);

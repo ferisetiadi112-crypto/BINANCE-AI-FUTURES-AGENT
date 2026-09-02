@@ -18,6 +18,8 @@ import type { MarketState } from "../runtime/types";
 import type { AiDecision, DecisionDirection, DecisionEvidence, StrategyName, ConfidenceLevel } from "./types";
 import { getConfidenceLevel } from "./types";
 import { evaluateAllStrategies, getBestSignal } from "./strategies";
+import { AIRouter, type RouterResult } from "./llm/router";
+import type { AIDecisionOutput } from "./llm/types";
 import { logger } from "../logger";
 
 const DECISION_VERSION = "1.0.0";
@@ -143,6 +145,93 @@ export function validateDecision(decision: AiDecision): { valid: boolean; errors
     valid: errors.length === 0,
     errors,
   };
+}
+
+// ─── LLM Decision Generation ───────────────────────────────────────
+
+let llmRouter: AIRouter | null = null;
+
+/**
+ * Get or create the singleton AIRouter instance.
+ * The router dynamically discovers available providers from env vars.
+ */
+function getLLMRouter(): AIRouter {
+  if (!llmRouter) {
+    llmRouter = new AIRouter();
+  }
+  return llmRouter;
+}
+
+/**
+ * Override the router instance (useful for testing with mocked providers).
+ */
+export function setLLMRouterForTesting(router: AIRouter): void {
+  llmRouter = router;
+}
+
+/**
+ * Reset the router singleton (for testing).
+ */
+export function resetLLMRouter(): void {
+  llmRouter = null;
+}
+
+/**
+ * Generate an AI decision using the LLM provider chain.
+ * Falls back to the safe NO_TRADE decision if all providers fail.
+ *
+ * Returns a RouterResult containing:
+ *   - decision: the AIDecisionOutput from the LLM (or safe fallback)
+ *   - provider: which provider answered (or "safe_fallback")
+ *   - elapsedMs: total latency
+ */
+export async function generateLLMDecision(marketState: MarketState): Promise<RouterResult> {
+  const router = getLLMRouter();
+  return router.route(marketState);
+}
+
+/**
+ * Convert an LLM AIDecisionOutput into a full AiDecision object.
+ * Merges LLM output with market state context to produce the
+ * standard AiDecision format used by the risk engine and paper trading.
+ */
+export function mergeLLMDecisionIntoAiDecision(
+  llmOutput: AIDecisionOutput,
+  marketState: MarketState,
+  routerResult: RouterResult,
+): AiDecision {
+  decisionCounter++;
+
+  // Build evidence from market state
+  const evidence = buildEvidence(marketState);
+
+  // Map LLM strategy to our StrategyName type
+  const strategy: StrategyName = llmOutput.strategy;
+
+  const decision: AiDecision = {
+    id: `DEC-LLM-${Date.now()}-${decisionCounter}`,
+    timestamp: Date.now(),
+    symbol: marketState.symbol,
+
+    direction: llmOutput.direction,
+    confidence: llmOutput.confidence,
+    confidenceLevel: getConfidenceLevel(llmOutput.confidence),
+    strategy,
+
+    marketRegime: marketState.marketRegime,
+    regimeConfidence: marketState.regimeConfidence,
+    evidence,
+
+    decisionVersion: DECISION_VERSION,
+    modelVersion: `llm-${routerResult.provider}`,
+  };
+
+  logger.info(
+    "ai-decision",
+    `LLM Decision: ${llmOutput.direction} ${marketState.symbol} (${(llmOutput.confidence * 100).toFixed(1)}%) via ${routerResult.provider} [${routerResult.elapsedMs}ms]`,
+  );
+
+  return decision;
 }
 
 // ─── Decision Summary ─────────────────────────────────────────────────

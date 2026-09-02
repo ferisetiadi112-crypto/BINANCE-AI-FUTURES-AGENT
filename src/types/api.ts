@@ -543,3 +543,99 @@ export type LearningResponse = {
   derivedLessons?: DerivedLesson[];
   lessonStats?: LessonStats;
 };
+
+// ─── LLM Provider Status (Phase 9B) ────────────────────────────────
+
+export type LLMProviderStatus = {
+  name: string;
+  configured: boolean;
+};
+
+export type LLMStatusResponse = {
+  providers: LLMProviderStatus[];
+  routerConfig: {
+    fallbackEnabled: boolean;
+    totalProviders: number;
+    configuredProviders: number;
+  };
+};
+
+// ─── Sandbox Wallet (Phase 9D) ─────────────────────────────────────
+
+export type WalletStatus = {
+  balance: number;
+  initialCapital: number;
+  totalTopUp: number;
+  totalWithdraw: number;
+  netChange: number;
+  transactionCount: number;
+};
+
+export type WalletTransaction = {
+  id: string;
+  account_id: string;
+  type: "TOP_UP" | "WITHDRAW";
+  amount: number;
+  balance_before: number;
+  balance_after: number;
+  note: string;
+  initiated_by: string;
+  created_at: string;
+};
+
+// ─── Guardrail Events & Audit Trail (Phase 9D) ────────────────────
+
+export type GuardrailEventType =
+  | "BALANCE_CHECK"
+  | "TRADE_BLOCKED"
+  | "TRADE_ALLOWED"
+  | "INSUFFICIENT_FUNDS"
+  | "MARKET_UNSTABLE"
+  | "DAILY_LIMIT_REACHED"
+  | "WALLET_MODIFIED";
+
+export type GuardrailEvent = {
+  id: number;
+  event_type: GuardrailEventType;
+  severity: "INFO" | "WARN" | "ERROR" | "CRITICAL";
+  message: string;
+  details: string;
+  balance_snapshot: number | null;
+  created_at: string;
+};
+
+export type AuditTrailEntry = {
+  id: number;
+  event_type: GuardrailEventType;
+  severity: "INFO" | "WARN" | "ERROR" | "CRITICAL";
+  message: string;
+  details: string;
+  balance_snapshot: number | null;
+  created_at: string;
+  source: "guardrail" | "wallet";
+};
+
+export type AuditTrailResponse = {
+  events: AuditTrailEntry[];
+};
+
+// ─── Binance Futures Testnet (Phase 9E) ───────────────────────────
+
+export type TestnetPosition = {
+  symbol: string;
+  side: "LONG" | "SHORT";
+  size: number;
+  entryPrice: number;
+  markPrice: number;
+  unrealizedPnl: number;
+  leverage: number;
+  margin: number;
+};
+
+export type TestnetStatusResponse = {
+  configured: boolean;
+  connected: boolean;
+  balance: number;
+  positions: TestnetPosition[];
+  paperTrading: boolean;
+};

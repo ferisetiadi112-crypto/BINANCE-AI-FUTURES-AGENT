@@ -3,6 +3,7 @@ import {
   Activity,
   BrainCircuit,
   CandlestickChart,
+  Command,
   Gauge,
   LayoutDashboard,
   LineChart,
@@ -54,6 +55,7 @@ const groups = [
     label: "Control",
     items: [
       { title: "Risk Center", url: "/risk-center", icon: ShieldAlert },
+      { title: "Command Center", url: "/command-center", icon: Command },
       { title: "System", url: "/system", icon: Cpu },
     ],
   },

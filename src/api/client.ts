@@ -24,6 +24,13 @@ import {
   getPaperStatus,
   getFeedStatus,
   getMarketSnapshot,
+  getLLMStatus,
+  getWalletStatus,
+  topUpWallet,
+  withdrawFromWallet,
+  getAuditTrail,
+  getTestnetStatus,
+  syncTestnetBalance,
 } from "../backend/api";
 import type { ApiResponse } from "../types/api";
 
@@ -129,5 +136,52 @@ export async function fetchFeedStatus() {
 
 export async function fetchMarketSnapshot(symbol: string) {
   const result = await getMarketSnapshot({ data: symbol });
+  return result as ApiResponse<any>;
+}
+
+// ─── LLM Provider Status (Phase 9B) ────────────────────────────────
+
+export async function fetchLLMStatus() {
+  const result = await getLLMStatus();
+  return result as ApiResponse<any>;
+}
+
+// ─── Sandbox Wallet (Phase 9D) ─────────────────────────────────────
+
+export async function fetchWalletStatus() {
+  const result = await getWalletStatus();
+  return result as ApiResponse<any>;
+}
+
+export async function walletTopUp(amount: number, note?: string) {
+  const payload: { amount: number; note?: string } = { amount };
+  if (note !== undefined) payload.note = note;
+  const result = await topUpWallet({ data: payload });
+  return result as ApiResponse<any>;
+}
+
+export async function walletWithdraw(amount: number, note?: string) {
+  const payload: { amount: number; note?: string } = { amount };
+  if (note !== undefined) payload.note = note;
+  const result = await withdrawFromWallet({ data: payload });
+  return result as ApiResponse<any>;
+}
+
+// ─── Audit Trail (Phase 9D) ────────────────────────────────────────
+
+export async function fetchAuditTrail() {
+  const result = await getAuditTrail();
+  return result as ApiResponse<any>;
+}
+
+// ─── Binance Futures Testnet (Phase 9E) ────────────────────────────
+
+export async function fetchTestnetStatus() {
+  const result = await getTestnetStatus();
+  return result as ApiResponse<any>;
+}
+
+export async function syncTestnetBalanceAction() {
+  const result = await syncTestnetBalance();
   return result as ApiResponse<any>;
 }

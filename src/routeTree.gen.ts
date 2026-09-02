@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AiAuditRouteImport } from './routes/ai-audit'
 import { Route as AiIntelligenceRouteImport } from './routes/ai-intelligence'
+import { Route as CommandCenterRouteImport } from './routes/command-center'
 import { Route as LearningRouteImport } from './routes/learning'
 import { Route as MarketAnalysisRouteImport } from './routes/market-analysis'
 import { Route as RiskCenterRouteImport } from './routes/risk-center'
@@ -33,6 +34,11 @@ const AiAuditRoute = AiAuditRouteImport.update({
 const AiIntelligenceRoute = AiIntelligenceRouteImport.update({
   id: '/ai-intelligence',
   path: '/ai-intelligence',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CommandCenterRoute = CommandCenterRouteImport.update({
+  id: '/command-center',
+  path: '/command-center',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LearningRoute = LearningRouteImport.update({
@@ -75,6 +81,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/ai-audit': typeof AiAuditRoute
   '/ai-intelligence': typeof AiIntelligenceRoute
+  '/command-center': typeof CommandCenterRoute
   '/learning': typeof LearningRoute
   '/market-analysis': typeof MarketAnalysisRoute
   '/risk-center': typeof RiskCenterRoute
@@ -87,6 +94,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/ai-audit': typeof AiAuditRoute
   '/ai-intelligence': typeof AiIntelligenceRoute
+  '/command-center': typeof CommandCenterRoute
   '/learning': typeof LearningRoute
   '/market-analysis': typeof MarketAnalysisRoute
   '/risk-center': typeof RiskCenterRoute
@@ -100,6 +108,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/ai-audit': typeof AiAuditRoute
   '/ai-intelligence': typeof AiIntelligenceRoute
+  '/command-center': typeof CommandCenterRoute
   '/learning': typeof LearningRoute
   '/market-analysis': typeof MarketAnalysisRoute
   '/risk-center': typeof RiskCenterRoute
@@ -114,6 +123,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ai-audit'
     | '/ai-intelligence'
+    | '/command-center'
     | '/learning'
     | '/market-analysis'
     | '/risk-center'
@@ -126,6 +136,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ai-audit'
     | '/ai-intelligence'
+    | '/command-center'
     | '/learning'
     | '/market-analysis'
     | '/risk-center'
@@ -138,6 +149,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ai-audit'
     | '/ai-intelligence'
+    | '/command-center'
     | '/learning'
     | '/market-analysis'
     | '/risk-center'
@@ -151,6 +163,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AiAuditRoute: typeof AiAuditRoute
   AiIntelligenceRoute: typeof AiIntelligenceRoute
+  CommandCenterRoute: typeof CommandCenterRoute
   LearningRoute: typeof LearningRoute
   MarketAnalysisRoute: typeof MarketAnalysisRoute
   RiskCenterRoute: typeof RiskCenterRoute
@@ -181,6 +194,13 @@ declare module '@tanstack/react-router' {
       path: '/ai-intelligence'
       fullPath: '/ai-intelligence'
       preLoaderRoute: typeof AiIntelligenceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/command-center': {
+      id: '/command-center'
+      path: '/command-center'
+      fullPath: '/command-center'
+      preLoaderRoute: typeof CommandCenterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/learning': {
@@ -239,6 +259,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AiAuditRoute: AiAuditRoute,
   AiIntelligenceRoute: AiIntelligenceRoute,
+  CommandCenterRoute: CommandCenterRoute,
   LearningRoute: LearningRoute,
   MarketAnalysisRoute: MarketAnalysisRoute,
   RiskCenterRoute: RiskCenterRoute,

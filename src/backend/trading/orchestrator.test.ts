@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { TradingOrchestrator } from "./orchestrator";
 import type { MarketState } from "../runtime/types";
 import * as dataAdapter from "../services/data-adapter";
+import * as walletRepo from "../repositories/wallet";
 
 const trendingUpState: MarketState = {
   symbol: "BTCUSDT",
@@ -40,10 +41,20 @@ const uncertainState: MarketState = {
 
 describe("Trading Orchestrator", () => {
   let orchestrator: TradingOrchestrator;
+  let walletSpy: ReturnType<typeof vi.spyOn>;
+  let guardrailSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
+    // Mock wallet repository so orchestrator doesn't need a real database
+    walletSpy = vi.spyOn(walletRepo.walletRepository, "getBalance").mockReturnValue(5.0);
+    guardrailSpy = vi.spyOn(walletRepo.walletRepository, "logGuardrailEvent").mockImplementation(() => {});
     orchestrator = new TradingOrchestrator();
     orchestrator.start();
+  });
+
+  afterEach(() => {
+    walletSpy?.mockRestore();
+    guardrailSpy?.mockRestore();
   });
 
   describe("processMarketUpdate", () => {
@@ -300,6 +311,110 @@ describe("Trading Orchestrator", () => {
       expect(stats).toBeDefined();
       expect(typeof stats.capital).toBe("number");
       expect(stats.capital).toBeGreaterThan(0);
+    });
+  });
+
+  describe("processMarketUpdateLLM — LLM provider integration", () => {
+    let llmSpy: ReturnType<typeof vi.spyOn>;
+
+    afterEach(() => {
+      llmSpy?.mockRestore();
+    });
+
+    it("uses LLM decision when provider succeeds", async () => {
+      const { generateLLMDecision } = await import("../ai/decision-engine");
+      llmSpy = vi.spyOn(await import("../ai/decision-engine"), "generateLLMDecision").mockResolvedValue({
+        decision: { direction: "LONG", confidence: 0.8, strategy: "MOMENTUM", reasoning: "Strong trend" },
+        provider: "groq",
+        providerAttempts: 1,
+        errors: [],
+        elapsedMs: 150,
+      });
+
+      const result = await orchestrator.processMarketUpdateLLM(trendingUpState);
+
+      expect(llmSpy).toHaveBeenCalled();
+      expect(result.decision.direction).toBe("LONG");
+      expect(result.decision.modelVersion).toContain("groq");
+      expect(result.decision.id).toContain("DEC-LLM");
+    });
+
+    it("falls back to rule-based when all LLM providers fail", async () => {
+      llmSpy = vi.spyOn(await import("../ai/decision-engine"), "generateLLMDecision").mockResolvedValue({
+        decision: { direction: "NO_TRADE", confidence: 0, strategy: "TREND_FOLLOWING", reasoning: "All failed" },
+        provider: "safe_fallback",
+        providerAttempts: 0,
+        errors: [],
+        elapsedMs: 0,
+      });
+
+      const result = await orchestrator.processMarketUpdateLLM(trendingUpState);
+
+      // Should have fallen back to rule-based (modelVersion contains 'rule-based')
+      expect(result.decision.modelVersion).toContain("rule-based");
+      expect(result.decision).toBeDefined();
+    });
+
+    it("falls back to rule-based when LLM throws an error", async () => {
+      llmSpy = vi.spyOn(await import("../ai/decision-engine"), "generateLLMDecision").mockRejectedValue(
+        new Error("Network failure"),
+      );
+
+      const result = await orchestrator.processMarketUpdateLLM(trendingUpState);
+
+      // Should not crash — falls back to rule-based
+      expect(result.decision).toBeDefined();
+      expect(result.decision.modelVersion).toContain("rule-based");
+    });
+
+    it("risk engine still gates LLM decisions", async () => {
+      llmSpy = vi.spyOn(await import("../ai/decision-engine"), "generateLLMDecision").mockResolvedValue({
+        decision: { direction: "LONG", confidence: 0.9, strategy: "MOMENTUM", reasoning: "Strong" },
+        provider: "gemini",
+        providerAttempts: 1,
+        errors: [],
+        elapsedMs: 200,
+      });
+
+      // Lock the risk engine
+      orchestrator.getRiskEngine().updateDailyPnl(-0.55);
+
+      const result = await orchestrator.processMarketUpdateLLM(trendingUpState);
+
+      expect(result.riskResult.approved).toBe(false);
+      expect(result.trade).toBeNull();
+    });
+
+    it("records LLM decisions in history", async () => {
+      llmSpy = vi.spyOn(await import("../ai/decision-engine"), "generateLLMDecision").mockResolvedValue({
+        decision: { direction: "SHORT", confidence: 0.65, strategy: "BREAKOUT", reasoning: "Volatility spike" },
+        provider: "cerebras",
+        providerAttempts: 1,
+        errors: [],
+        elapsedMs: 80,
+      });
+
+      await orchestrator.processMarketUpdateLLM(trendingUpState);
+
+      const history = orchestrator.getDecisionHistory();
+      expect(history.length).toBe(1);
+      expect(history[0]!.direction).toBe("SHORT");
+      expect(history[0]!.modelVersion).toContain("cerebras");
+    });
+
+    it("NO_TRADE from LLM skips paper execution", async () => {
+      llmSpy = vi.spyOn(await import("../ai/decision-engine"), "generateLLMDecision").mockResolvedValue({
+        decision: { direction: "NO_TRADE", confidence: 0.2, strategy: "TREND_FOLLOWING", reasoning: "Uncertain" },
+        provider: "groq",
+        providerAttempts: 1,
+        errors: [],
+        elapsedMs: 100,
+      });
+
+      const result = await orchestrator.processMarketUpdateLLM(trendingUpState);
+
+      expect(result.decision.direction).toBe("NO_TRADE");
+      expect(result.trade).toBeNull();
     });
   });
 });
