@@ -30,6 +30,7 @@ import {
   generateRealtimeMarketState,
   getDataSource,
 } from "../services/data-adapter";
+import { getRuntimeSnapshot } from "../trading/runtime";
 import type { ApiResponse } from "../../types/api";
 
 function wrap<T>(data: T): ApiResponse<T> {
@@ -177,3 +178,12 @@ export const getMarketSnapshot = createServerFn({ method: "GET" })
     const state = generateRealtimeMarketState(symbol);
     return wrap(state);
   });
+
+// ─── GET /api/runtime-status ─────────────────────────────────────
+
+export const getRuntimeStatus = createServerFn({ method: "GET" }).handler(
+  async () => {
+    const snapshot = getRuntimeSnapshot();
+    return wrap(snapshot);
+  },
+);

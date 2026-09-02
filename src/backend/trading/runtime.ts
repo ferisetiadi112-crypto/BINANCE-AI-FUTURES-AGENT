@@ -36,6 +36,33 @@ const TICK_INTERVAL_MS = 15_000;
 
 // ─── Runtime Stats ──────────────────────────────────────────────
 
+export type RuntimeEvent = {
+  timestamp: number;
+  tickNumber: number;
+  symbol: string;
+  feedState: string;
+  decision: string | null;
+  confidence: number | null;
+  strategy: string | null;
+  riskApproved: boolean | null;
+  riskReason: string | null;
+  executionResult: string | null;
+  paperTradeId: string | null;
+  experienceRecorded: boolean;
+  error: string | null;
+};
+
+export type PerSymbolStats = {
+  symbol: string;
+  processed: number;
+  skipped: number;
+  decisions: number;
+  noTrade: number;
+  riskRejected: number;
+  paperExecutions: number;
+  errors: number;
+};
+
 export type RuntimeStats = {
   tickCount: number;
   totalProcessed: number;
@@ -49,6 +76,17 @@ export type RuntimeStats = {
   startedAt: number;
 };
 
+export type RuntimeSnapshot = {
+  running: boolean;
+  tickIntervalMs: number;
+  stats: RuntimeStats;
+  perSymbol: PerSymbolStats[];
+  recentEvents: RuntimeEvent[];
+  eventBufferLimit: number;
+};
+
+const MAX_EVENT_BUFFER = 100;
+
 const _stats: RuntimeStats = {
   tickCount: 0,
   totalProcessed: 0,
@@ -61,6 +99,9 @@ const _stats: RuntimeStats = {
   lastTickAt: 0,
   startedAt: 0,
 };
+
+const _perSymbol = new Map<string, PerSymbolStats>();
+const _events: RuntimeEvent[] = [];
 
 // ─── Singleton State ─────────────────────────────────────────────
 
@@ -86,18 +127,101 @@ function tick(): void {
     _stats.totalSkipped += skipped;
     _stats.totalErrors += errored;
 
-    // Aggregate decision-level metrics
+    // Per-symbol processed/skipped counts
     for (const r of results) {
-      if (r.reason !== "OK" || !r.result) continue;
+      const ps = _getOrCreatePerSymbol(r.symbol);
+      if (r.reason === "OK") ps.processed++;
+      else if (r.reason === "OFFLINE/STALE/insufficient_data") ps.skipped++;
+    }
+
+    // Aggregate decision-level metrics and record events
+    for (const r of results) {
+      const sym = r.symbol;
+      const ps = _getOrCreatePerSymbol(sym);
+
+      if (r.reason === "ERROR") {
+        ps.errors++;
+        _events.push({
+          timestamp: Date.now(),
+          tickNumber: _stats.tickCount,
+          symbol: sym,
+          feedState: "ERROR",
+          decision: null,
+          confidence: null,
+          strategy: null,
+          riskApproved: null,
+          riskReason: null,
+          executionResult: null,
+          paperTradeId: null,
+          experienceRecorded: false,
+          error: "Symbol processing error",
+        });
+        continue;
+      }
+
+      if (r.reason !== "OK" || !r.result) {
+        // Skipped symbol
+        _events.push({
+          timestamp: Date.now(),
+          tickNumber: _stats.tickCount,
+          symbol: sym,
+          feedState: r.reason || "skipped",
+          decision: null,
+          confidence: null,
+          strategy: null,
+          riskApproved: null,
+          riskReason: null,
+          executionResult: null,
+          paperTradeId: null,
+          experienceRecorded: false,
+          error: null,
+        });
+        continue;
+      }
+
       const { decision, riskResult, trade } = r.result;
       _stats.totalDecisions++;
+      ps.decisions++;
+
+      let eventDecision: string | null = decision.direction;
+      let eventExecResult: string | null = null;
+      let eventPaperId: string | null = null;
+
       if (decision.direction === "NO_TRADE") {
         _stats.totalNoTrade++;
+        ps.noTrade++;
+        eventExecResult = "NO_TRADE";
       } else if (!riskResult.approved) {
         _stats.totalRiskRejected++;
+        ps.riskRejected++;
+        eventExecResult = "REJECTED";
       } else if (trade) {
         _stats.totalPaperExecutions++;
+        ps.paperExecutions++;
+        eventExecResult = "EXECUTED";
+        eventPaperId = trade.id;
       }
+
+      _events.push({
+        timestamp: Date.now(),
+        tickNumber: _stats.tickCount,
+        symbol: sym,
+        feedState: "ONLINE",
+        decision: eventDecision,
+        confidence: decision.confidence,
+        strategy: decision.strategy,
+        riskApproved: riskResult.approved,
+        riskReason: riskResult.reason,
+        executionResult: eventExecResult,
+        paperTradeId: eventPaperId,
+        experienceRecorded: true,
+        error: null,
+      });
+    }
+
+    // Trim event buffer to bounded size
+    while (_events.length > MAX_EVENT_BUFFER) {
+      _events.shift();
     }
 
     if (processed > 0 || errored > 0) {
@@ -194,6 +318,8 @@ export function resetRuntime(): void {
   _stats.totalPaperExecutions = 0;
   _stats.lastTickAt = 0;
   _stats.startedAt = 0;
+  _perSymbol.clear();
+  _events.length = 0;
 }
 
 /**
@@ -201,4 +327,44 @@ export function resetRuntime(): void {
  */
 export function getTickIntervalMs(): number {
   return TICK_INTERVAL_MS;
+}
+
+// ─── Per-Symbol Helpers ─────────────────────────────────────────
+
+function _getOrCreatePerSymbol(symbol: string): PerSymbolStats {
+  let ps = _perSymbol.get(symbol);
+  if (!ps) {
+    ps = { symbol, processed: 0, skipped: 0, decisions: 0, noTrade: 0, riskRejected: 0, paperExecutions: 0, errors: 0 };
+    _perSymbol.set(symbol, ps);
+  }
+  return ps;
+}
+
+
+
+// ─── Runtime Snapshot ───────────────────────────────────────────
+
+/**
+ * Get a complete snapshot of the runtime state.
+ * Read-only — does not modify any runtime state.
+ */
+export function getRuntimeSnapshot(): RuntimeSnapshot {
+  return {
+    running: _running,
+    tickIntervalMs: TICK_INTERVAL_MS,
+    stats: { ..._stats },
+    perSymbol: Array.from(_perSymbol.values()).map(ps => ({ ...ps })),
+    recentEvents: _events.slice(),
+    eventBufferLimit: MAX_EVENT_BUFFER,
+  };
+}
+
+/** Get per-symbol statistics. */
+export function getPerSymbolStats(): PerSymbolStats[] {
+  return Array.from(_perSymbol.values()).map(ps => ({ ...ps }));
+}
+
+/** Get recent runtime events (bounded buffer). */
+export function getRuntimeEvents(): RuntimeEvent[] {
+  return _events.slice();
 }
