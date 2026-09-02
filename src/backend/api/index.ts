@@ -36,6 +36,8 @@ import { walletRepository } from "../repositories/wallet";
 import { getTestnetExecutor } from "../exchange/testnet-executor";
 import { isTestnetConfigured } from "../exchange/binance-testnet";
 import type { ApiResponse, LLMStatusResponse } from "../../types/api";
+import { bossGuardMiddleware } from "../auth/middleware";
+import { createSessionToken, createSessionCookie, createClearSessionCookie } from "../auth";
 
 function wrap<T>(data: T): ApiResponse<T> {
   return {
@@ -147,6 +149,30 @@ export const getSystem = createServerFn({ method: "GET" }).handler(
   },
 );
 
+// ─── POST /api/auth/login ───────────────────────────────────────────
+// Dev-only login endpoint. Creates a signed session cookie.
+// In production, this should verify password credentials.
+
+export const login = createServerFn({ method: "POST" })
+  .validator((input: { role?: string }) => input)
+  .handler(async ({ data }) => {
+    const role = data.role === "viewer" ? "viewer" : "boss";
+    const token = createSessionToken(
+      role === "boss" ? "boss-dev-001" : "viewer-dev-001",
+      role,
+    );
+    const cookie = createSessionCookie(token);
+    return { success: true, cookie, role };
+  });
+
+// ─── POST /api/auth/logout ──────────────────────────────────────────
+// Clears the session cookie.
+
+export const logout = createServerFn({ method: "POST" }).handler(async () => {
+  const cookie = createClearSessionCookie();
+  return { success: true, cookie };
+});
+
 // ─── GET /api/health ──────────────────────────────────────────────────
 
 export const getHealth = createServerFn({ method: "GET" }).handler(
@@ -221,16 +247,31 @@ export const getWalletStatus = createServerFn({ method: "GET" }).handler(
 );
 
 // ─── POST /api/wallet-top-up ────────────────────────────────────────
+// Protected: boss role required. Identity derived server-side.
 
 export const topUpWallet = createServerFn({ method: "POST" })
+  .middleware([bossGuardMiddleware])
   .validator((input: { amount: number; note?: string }) => input)
-  .handler(async ({ data }) => {
-    const newBalance = walletRepository.topUp(data.amount, data.note || "Boss top-up");
+  .handler(async ({ data, context }) => {
+    const session = (context as any).session as import("../auth").SessionContext;
+
+    // Input validation
+    if (typeof data.amount !== "number" || !Number.isFinite(data.amount) || data.amount <= 0) {
+      throw new Error("Invalid amount: must be a positive finite number");
+    }
+    if (data.amount > 1_000_000) {
+      throw new Error("Amount exceeds maximum allowed value");
+    }
+    const amount = Math.round(data.amount * 100) / 100;
+    const note = (typeof data.note === "string" ? data.note : "").slice(0, 500);
+
+    // Execute with server-derived identity
+    const newBalance = walletRepository.topUp(amount, note);
     walletRepository.logGuardrailEvent(
       "WALLET_MODIFIED",
       "INFO",
-      `Boss topped up $${data.amount.toFixed(2)} — New balance: $${newBalance.toFixed(2)}`,
-      { type: "TOP_UP", amount: data.amount, note: data.note },
+      `Top-up: $${amount.toFixed(2)} by ${session.userId} (boss) — New balance: $${newBalance.toFixed(2)}`,
+      { type: "TOP_UP", amount, note, initiatedBy: session.userId },
       newBalance,
     );
     return wrap({ balance: newBalance });
@@ -238,16 +279,31 @@ export const topUpWallet = createServerFn({ method: "POST" })
 );
 
 // ─── POST /api/wallet-withdraw ──────────────────────────────────────
+// Protected: boss role required. Identity derived server-side.
 
 export const withdrawFromWallet = createServerFn({ method: "POST" })
+  .middleware([bossGuardMiddleware])
   .validator((input: { amount: number; note?: string }) => input)
-  .handler(async ({ data }) => {
-    const newBalance = walletRepository.withdraw(data.amount, data.note || "Boss withdrawal");
+  .handler(async ({ data, context }) => {
+    const session = (context as any).session as import("../auth").SessionContext;
+
+    // Input validation
+    if (typeof data.amount !== "number" || !Number.isFinite(data.amount) || data.amount <= 0) {
+      throw new Error("Invalid amount: must be a positive finite number");
+    }
+    if (data.amount > 1_000_000) {
+      throw new Error("Amount exceeds maximum allowed value");
+    }
+    const amount = Math.round(data.amount * 100) / 100;
+    const note = (typeof data.note === "string" ? data.note : "").slice(0, 500);
+
+    // Execute with server-derived identity
+    const newBalance = walletRepository.withdraw(amount, note);
     walletRepository.logGuardrailEvent(
       "WALLET_MODIFIED",
       "INFO",
-      `Boss withdrew $${data.amount.toFixed(2)} — New balance: $${newBalance.toFixed(2)}`,
-      { type: "WITHDRAW", amount: data.amount, note: data.note },
+      `Withdrawal: $${amount.toFixed(2)} by ${session.userId} (boss) — New balance: $${newBalance.toFixed(2)}`,
+      { type: "WITHDRAW", amount, note, initiatedBy: session.userId },
       newBalance,
     );
     return wrap({ balance: newBalance });
@@ -308,11 +364,22 @@ export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
 );
 
 // ─── POST /api/testnet-sync-balance ────────────────────────────────
+// Protected: boss role required.
 
-export const syncTestnetBalance = createServerFn({ method: "POST" }).handler(
-  async () => {
+export const syncTestnetBalance = createServerFn({ method: "POST" })
+  .middleware([bossGuardMiddleware])
+  .handler(async ({ context }) => {
+    const session = (context as any).session as import("../auth").SessionContext;
     const executor = getTestnetExecutor();
     const newBalance = await executor.syncBalance();
+    // Log with server-derived identity
+    walletRepository.logGuardrailEvent(
+      "BALANCE_CHECK",
+      "INFO",
+      `Balance synced to testnet by ${session.userId} (boss) — New balance: $${newBalance.toFixed(2)}`,
+      { type: "TESTNET_SYNC", newBalance, initiatedBy: session.userId },
+      newBalance,
+    );
     return wrap({ balance: newBalance });
   },
 );
