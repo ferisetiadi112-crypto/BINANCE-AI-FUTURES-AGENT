@@ -103,6 +103,14 @@ const _stats: RuntimeStats = {
 const _perSymbol = new Map<string, PerSymbolStats>();
 const _events: RuntimeEvent[] = [];
 
+/**
+ * Clone a RuntimeEvent. All fields are primitives, so spread is sufficient.
+ * Prevents callers from mutating internal event buffer via returned references.
+ */
+function cloneEvent(e: RuntimeEvent): RuntimeEvent {
+  return { ...e };
+}
+
 // ─── Singleton State ─────────────────────────────────────────────
 
 let _orchestrator: TradingOrchestrator | null = null;
@@ -135,88 +143,93 @@ function tick(): void {
     }
 
     // Aggregate decision-level metrics and record events
+    // Per-symbol try/catch ensures one symbol's error doesn't prevent others from being recorded
     for (const r of results) {
-      const sym = r.symbol;
-      const ps = _getOrCreatePerSymbol(sym);
+      try {
+        const sym = r.symbol;
+        const ps = _getOrCreatePerSymbol(sym);
 
-      if (r.reason === "ERROR") {
-        ps.errors++;
+        if (r.reason === "ERROR") {
+          ps.errors++;
+          _events.push({
+            timestamp: Date.now(),
+            tickNumber: _stats.tickCount,
+            symbol: sym,
+            feedState: "ERROR",
+            decision: null,
+            confidence: null,
+            strategy: null,
+            riskApproved: null,
+            riskReason: null,
+            executionResult: null,
+            paperTradeId: null,
+            experienceRecorded: false,
+            error: "Symbol processing error",
+          });
+          continue;
+        }
+
+        if (r.reason !== "OK" || !r.result) {
+          // Skipped symbol
+          _events.push({
+            timestamp: Date.now(),
+            tickNumber: _stats.tickCount,
+            symbol: sym,
+            feedState: r.reason || "skipped",
+            decision: null,
+            confidence: null,
+            strategy: null,
+            riskApproved: null,
+            riskReason: null,
+            executionResult: null,
+            paperTradeId: null,
+            experienceRecorded: false,
+            error: null,
+          });
+          continue;
+        }
+
+        const { decision, riskResult, trade } = r.result;
+        _stats.totalDecisions++;
+        ps.decisions++;
+
+        let eventDecision: string | null = decision.direction;
+        let eventExecResult: string | null = null;
+        let eventPaperId: string | null = null;
+
+        if (decision.direction === "NO_TRADE") {
+          _stats.totalNoTrade++;
+          ps.noTrade++;
+          eventExecResult = "NO_TRADE";
+        } else if (!riskResult.approved) {
+          _stats.totalRiskRejected++;
+          ps.riskRejected++;
+          eventExecResult = "REJECTED";
+        } else if (trade) {
+          _stats.totalPaperExecutions++;
+          ps.paperExecutions++;
+          eventExecResult = "EXECUTED";
+          eventPaperId = trade.id;
+        }
+
         _events.push({
           timestamp: Date.now(),
           tickNumber: _stats.tickCount,
           symbol: sym,
-          feedState: "ERROR",
-          decision: null,
-          confidence: null,
-          strategy: null,
-          riskApproved: null,
-          riskReason: null,
-          executionResult: null,
-          paperTradeId: null,
-          experienceRecorded: false,
-          error: "Symbol processing error",
-        });
-        continue;
-      }
-
-      if (r.reason !== "OK" || !r.result) {
-        // Skipped symbol
-        _events.push({
-          timestamp: Date.now(),
-          tickNumber: _stats.tickCount,
-          symbol: sym,
-          feedState: r.reason || "skipped",
-          decision: null,
-          confidence: null,
-          strategy: null,
-          riskApproved: null,
-          riskReason: null,
-          executionResult: null,
-          paperTradeId: null,
-          experienceRecorded: false,
+          feedState: "ONLINE",
+          decision: eventDecision,
+          confidence: decision.confidence,
+          strategy: decision.strategy,
+          riskApproved: riskResult.approved,
+          riskReason: riskResult.reason,
+          executionResult: eventExecResult,
+          paperTradeId: eventPaperId,
+          experienceRecorded: true,
           error: null,
         });
-        continue;
+      } catch (err) {
+        logger.error("trading-runtime", `Event recording error for ${r.symbol}: ${err}`);
       }
-
-      const { decision, riskResult, trade } = r.result;
-      _stats.totalDecisions++;
-      ps.decisions++;
-
-      let eventDecision: string | null = decision.direction;
-      let eventExecResult: string | null = null;
-      let eventPaperId: string | null = null;
-
-      if (decision.direction === "NO_TRADE") {
-        _stats.totalNoTrade++;
-        ps.noTrade++;
-        eventExecResult = "NO_TRADE";
-      } else if (!riskResult.approved) {
-        _stats.totalRiskRejected++;
-        ps.riskRejected++;
-        eventExecResult = "REJECTED";
-      } else if (trade) {
-        _stats.totalPaperExecutions++;
-        ps.paperExecutions++;
-        eventExecResult = "EXECUTED";
-        eventPaperId = trade.id;
-      }
-
-      _events.push({
-        timestamp: Date.now(),
-        tickNumber: _stats.tickCount,
-        symbol: sym,
-        feedState: "ONLINE",
-        decision: eventDecision,
-        confidence: decision.confidence,
-        strategy: decision.strategy,
-        riskApproved: riskResult.approved,
-        riskReason: riskResult.reason,
-        executionResult: eventExecResult,
-        paperTradeId: eventPaperId,
-        experienceRecorded: true,
-        error: null,
-      });
     }
 
     // Trim event buffer to bounded size
@@ -354,7 +367,7 @@ export function getRuntimeSnapshot(): RuntimeSnapshot {
     tickIntervalMs: TICK_INTERVAL_MS,
     stats: { ..._stats },
     perSymbol: Array.from(_perSymbol.values()).map(ps => ({ ...ps })),
-    recentEvents: _events.slice(),
+    recentEvents: _events.map(cloneEvent),
     eventBufferLimit: MAX_EVENT_BUFFER,
   };
 }
@@ -364,7 +377,7 @@ export function getPerSymbolStats(): PerSymbolStats[] {
   return Array.from(_perSymbol.values()).map(ps => ({ ...ps }));
 }
 
-/** Get recent runtime events (bounded buffer). */
+/** Get recent runtime events (bounded buffer, deep-cloned for caller safety). */
 export function getRuntimeEvents(): RuntimeEvent[] {
-  return _events.slice();
+  return _events.map(cloneEvent);
 }

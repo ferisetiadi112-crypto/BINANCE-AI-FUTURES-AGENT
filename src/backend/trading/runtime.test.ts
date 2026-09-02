@@ -41,6 +41,7 @@ import {
   getRuntimeSnapshot,
   getPerSymbolStats,
   getRuntimeEvents,
+  getRuntimeStats,
 } from "./runtime";
 
 describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
@@ -403,5 +404,168 @@ describe("TradingRuntime — Phase 8D-F1 Runtime Activation", () => {
     resetRuntime();
     expect(getRuntimeEvents().length).toBe(0);
     expect(getPerSymbolStats().length).toBe(0);
+  });
+
+  // ─── Phase 8I: Observability Hardening Tests ─────────────────
+
+  it("global stats track correctly across multiple symbols in one tick", () => {
+    mockProcessRealtimeUpdate.mockReturnValue([
+      { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: true, reason: "OK" }, trade: { id: "PAPER-001" } }, reason: "OK" },
+      { symbol: "ETHUSDT", result: { decision: { direction: "NO_TRADE", confidence: 0.3, strategy: "MOMENTUM" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
+      { symbol: "SOLUSDT", result: { decision: { direction: "SHORT", confidence: 0.7, strategy: "MEAN_REVERSION" }, riskResult: { approved: false, reason: "Daily loss limit" }, trade: null }, reason: "OK" },
+      { symbol: "BNBUSDT", result: null, reason: "OFFLINE/STALE/insufficient_data" },
+      { symbol: "XRPUSDT", result: null, reason: "ERROR" },
+    ]);
+
+    startTradingRuntime();
+    const stats = getRuntimeStats();
+
+    expect(stats.tickCount).toBe(1);
+    expect(stats.totalProcessed).toBe(3);   // BTC, ETH, SOL
+    expect(stats.totalSkipped).toBe(1);      // BNB
+    expect(stats.totalErrors).toBe(1);       // XRP
+    expect(stats.totalDecisions).toBe(3);    // same as processed
+    expect(stats.totalNoTrade).toBe(1);      // ETH
+    expect(stats.totalRiskRejected).toBe(1); // SOL
+    expect(stats.totalPaperExecutions).toBe(1); // BTC
+  });
+
+  it("NO_TRADE is not counted as paper execution", () => {
+    mockProcessRealtimeUpdate.mockReturnValue([
+      { symbol: "BTCUSDT", result: { decision: { direction: "NO_TRADE", confidence: 0.2, strategy: "MOMENTUM" }, riskResult: { approved: true, reason: "NO_TRADE" }, trade: null }, reason: "OK" },
+    ]);
+
+    startTradingRuntime();
+    const stats = getRuntimeStats();
+    expect(stats.totalNoTrade).toBe(1);
+    expect(stats.totalPaperExecutions).toBe(0);
+    expect(stats.totalRiskRejected).toBe(0);
+  });
+
+  it("risk rejection is not counted as paper execution", () => {
+    mockProcessRealtimeUpdate.mockReturnValue([
+      { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: false, reason: "Daily loss limit" }, trade: null }, reason: "OK" },
+    ]);
+
+    startTradingRuntime();
+    const stats = getRuntimeStats();
+    expect(stats.totalRiskRejected).toBe(1);
+    expect(stats.totalPaperExecutions).toBe(0);
+    expect(stats.totalNoTrade).toBe(0);
+  });
+
+  it("paper execution increments exactly once per trade", () => {
+    mockProcessRealtimeUpdate.mockReturnValue([
+      { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: true, reason: "OK" }, trade: { id: "PAPER-001" } }, reason: "OK" },
+    ]);
+
+    startTradingRuntime();
+    const stats = getRuntimeStats();
+    expect(stats.totalPaperExecutions).toBe(1);
+    expect(stats.totalDecisions).toBe(1);
+    expect(stats.totalNoTrade).toBe(0);
+    expect(stats.totalRiskRejected).toBe(0);
+  });
+
+  it("returned events cannot mutate internal buffer", () => {
+    mockProcessRealtimeUpdate.mockReturnValue([
+      { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
+    ]);
+
+    startTradingRuntime();
+
+    const events = getRuntimeEvents();
+    events[0]!.symbol = "MUTATED";
+
+    const freshEvents = getRuntimeEvents();
+    expect(freshEvents[0]!.symbol).toBe("BTCUSDT");
+  });
+
+  it("runtime snapshot recentEvents cannot mutate internal buffer", () => {
+    mockProcessRealtimeUpdate.mockReturnValue([
+      { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
+    ]);
+
+    startTradingRuntime();
+
+    const snap = getRuntimeSnapshot();
+    snap.recentEvents[0]!.symbol = "MUTATED";
+
+    const freshSnap = getRuntimeSnapshot();
+    expect(freshSnap.recentEvents[0]!.symbol).toBe("BTCUSDT");
+  });
+
+  it("error in one symbol does not affect stats of other symbols", () => {
+    mockProcessRealtimeUpdate.mockReturnValue([
+      { symbol: "BTCUSDT", result: null, reason: "ERROR" },
+      { symbol: "ETHUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: true, reason: "OK" }, trade: null }, reason: "OK" },
+      { symbol: "SOLUSDT", result: null, reason: "OFFLINE/STALE/insufficient_data" },
+    ]);
+
+    startTradingRuntime();
+
+    const perSymbol = getPerSymbolStats();
+    const btc = perSymbol.find(p => p.symbol === "BTCUSDT")!;
+    const eth = perSymbol.find(p => p.symbol === "ETHUSDT")!;
+    const sol = perSymbol.find(p => p.symbol === "SOLUSDT")!;
+
+    expect(btc!.errors).toBe(1);
+    expect(btc!.processed).toBe(0);
+
+    expect(eth!.processed).toBe(1);
+    expect(eth!.decisions).toBe(1);
+    expect(eth!.errors).toBe(0);
+
+    expect(sol!.skipped).toBe(1);
+    expect(sol!.errors).toBe(0);
+  });
+
+  it("runtime observability does not alter trading decision data", () => {
+    const decisionData = { direction: "LONG", confidence: 0.85, strategy: "TREND_FOLLOWING" };
+    const riskData = { approved: true, reason: "All risk checks passed" };
+    const tradeData = { id: "PAPER-001", pnl: 0.15 };
+
+    mockProcessRealtimeUpdate.mockReturnValue([
+      { symbol: "BTCUSDT", result: { decision: decisionData, riskResult: riskData, trade: tradeData }, reason: "OK" },
+    ]);
+
+    startTradingRuntime();
+
+    // The mock's returned values must be unchanged by observability processing
+    const results = mockProcessRealtimeUpdate.mock.results[0]!.value as any[];
+    expect(results[0]!.result.decision.direction).toBe("LONG");
+    expect(results[0]!.result.riskResult.approved).toBe(true);
+    expect(results[0]!.result.trade.id).toBe("PAPER-001");
+  });
+
+  it("paper execution event contains paper trade ID and experienceRecorded", () => {
+    mockProcessRealtimeUpdate.mockReturnValue([
+      { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: true, reason: "OK" }, trade: { id: "PAPER-TRD-42" } }, reason: "OK" },
+    ]);
+
+    startTradingRuntime();
+    const events = getRuntimeEvents();
+    const btcEvent = events.find(e => e.symbol === "BTCUSDT");
+    expect(btcEvent!.paperTradeId).toBe("PAPER-TRD-42");
+    expect(btcEvent!.executionResult).toBe("EXECUTED");
+    expect(btcEvent!.experienceRecorded).toBe(true);
+  });
+
+  it("multiple ticks accumulate stats correctly", () => {
+    mockProcessRealtimeUpdate.mockReturnValue([
+      { symbol: "BTCUSDT", result: { decision: { direction: "LONG", confidence: 0.8, strategy: "TREND" }, riskResult: { approved: true, reason: "OK" }, trade: { id: "PAPER-001" } }, reason: "OK" },
+    ]);
+
+    startTradingRuntime();
+    const stats1 = getRuntimeStats();
+    expect(stats1.totalProcessed).toBe(1);
+    expect(stats1.totalPaperExecutions).toBe(1);
+    expect(stats1.tickCount).toBe(1);
+
+    vi.advanceTimersByTime(getTickIntervalMs());
+    const stats2 = getRuntimeStats();
+    expect(stats2.totalProcessed).toBe(2);
+    expect(stats2.totalPaperExecutions).toBe(2);
+    expect(stats2.tickCount).toBe(2);
   });
 });
