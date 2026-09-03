@@ -898,3 +898,157 @@ describe("TestnetExecutor — Leverage Setting", () => {
     expect(mockClient.placeMarketOrder).toHaveBeenCalled();
   });
 });
+
+describe("TestnetExecutor — P7A Real Account Snapshot", () => {
+  it("requests real Binance account data", async () => {
+    const mockClient = createMockClient();
+    const executor = createExecutorWithMock(mockClient);
+
+    await executor.getAccountSnapshot();
+
+    expect(mockClient.getAccountInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps real account state correctly (balance, available, PnL, positions)", async () => {
+    const mockClient = createMockClient({
+      getAccountInfoResult: {
+        totalWalletBalance: "25.00",
+        totalUnrealizedProfit: "0.42",
+        totalMarginBalance: "25.42",
+        totalCrossWalletBalance: "25.00",
+        totalCrossUnPnl: "0.42",
+        availableBalance: "18.00",
+        maxWithdrawAmount: "18.00",
+        canTrade: true,
+        canDeposit: true,
+        canWithdraw: true,
+        updateTimestamp: Date.now(),
+        assets: [],
+        positions: [
+          {
+            symbol: "BTCUSDT",
+            positionAmount: "0.001",
+            entryPrice: "63000.00",
+            markPrice: "63200.00",
+            unRealizedProfit: "0.20",
+            leverage: "10",
+            positionSide: "LONG",
+            openOrderInitialMargin: "0.00",
+            positionInitialMargin: "6.30",
+            notional: "63.00",
+            isolatedMargin: "6.30",
+            bidNotional: "0",
+            askNotional: "0",
+            breakEvenPrice: "63001.00",
+            marginType: "ISOLATED",
+            isolatedWallet: "0.00",
+            updateTimestamp: Date.now(),
+          },
+          {
+            symbol: "ETHUSDT",
+            positionAmount: "-0.05",
+            entryPrice: "3400.00",
+            markPrice: "3380.00",
+            unRealizedProfit: "1.00",
+            leverage: "5",
+            positionSide: "SHORT",
+            openOrderInitialMargin: "0.00",
+            positionInitialMargin: "34.00",
+            notional: "170.00",
+            isolatedMargin: "34.00",
+            bidNotional: "0",
+            askNotional: "0",
+            breakEvenPrice: "3399.00",
+            marginType: "CROSS",
+            isolatedWallet: "0.00",
+            updateTimestamp: Date.now(),
+          },
+        ],
+      },
+    });
+    const executor = createExecutorWithMock(mockClient);
+
+    const snapshot = await executor.getAccountSnapshot();
+
+    expect(snapshot.balance).toBeCloseTo(25.0);
+    expect(snapshot.availableBalance).toBeCloseTo(18.0);
+    expect(snapshot.unrealizedPnl).toBeCloseTo(0.42);
+    expect(snapshot.marginBalance).toBeCloseTo(25.42);
+    expect(snapshot.positions).toHaveLength(2);
+    expect(snapshot.positions[0]).toMatchObject({
+      symbol: "BTCUSDT",
+      side: "LONG",
+      entryPrice: 63000,
+      markPrice: 63200,
+      unrealizedPnl: 0.2,
+      leverage: 10,
+      margin: 6.3,
+      marginType: "isolated",
+    });
+    expect(snapshot.positions[1]).toMatchObject({
+      symbol: "ETHUSDT",
+      side: "SHORT",
+      marginType: "cross",
+    });
+  });
+
+  it("marks unknown margin types as unknown instead of guessing", async () => {
+    const mockClient = createMockClient({
+      getAccountInfoResult: {
+        totalWalletBalance: "10.00",
+        totalUnrealizedProfit: "0.00",
+        totalMarginBalance: "10.00",
+        totalCrossWalletBalance: "10.00",
+        totalCrossUnPnl: "0.00",
+        availableBalance: "10.00",
+        maxWithdrawAmount: "10.00",
+        canTrade: true,
+        canDeposit: true,
+        canWithdraw: true,
+        updateTimestamp: Date.now(),
+        assets: [],
+        positions: [
+          {
+            symbol: "BTCUSDT",
+            positionAmount: "0.001",
+            entryPrice: "63000.00",
+            markPrice: "63000.00",
+            unRealizedProfit: "0.00",
+            leverage: "5",
+            positionSide: "LONG",
+            openOrderInitialMargin: "0.00",
+            positionInitialMargin: "12.60",
+            notional: "63.00",
+            isolatedMargin: "0.00",
+            bidNotional: "0",
+            askNotional: "0",
+            breakEvenPrice: "63000.00",
+            marginType: "",
+            isolatedWallet: "0.00",
+            updateTimestamp: Date.now(),
+          },
+        ],
+      },
+    });
+    const executor = createExecutorWithMock(mockClient);
+
+    const snapshot = await executor.getAccountSnapshot();
+
+    expect(snapshot.positions[0]!.marginType).toBe("unknown");
+  });
+
+  it("fails closed (throws) when Binance account data cannot be obtained", async () => {
+    const mockClient = createMockClient();
+    mockClient.getAccountInfo.mockRejectedValue(new Error("API timeout"));
+    const executor = createExecutorWithMock(mockClient);
+
+    await expect(executor.getAccountSnapshot()).rejects.toThrow("API timeout");
+  });
+
+  it("fails closed when client is not configured — no dummy fallback", async () => {
+    const executor = new TestnetExecutor();
+    (executor as any).client = null;
+
+    await expect(executor.getAccountSnapshot()).rejects.toThrow(/not configured/);
+  });
+});

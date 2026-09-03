@@ -280,32 +280,44 @@ function Dashboard() {
 
         <Panel title="AI Capital Allocation" code="$10 USDT MAX" glow>
           {aiAllocation ? (
-            <div className="space-y-3">
-              <div className="flex items-end justify-between">
-                <div>
-                  <div className="label-mono">AI Allocation Limit</div>
-                  <div className="mt-1 font-mono text-3xl font-semibold text-primary glow-text">
-                    {money(aiAllocation.limit)}
+            aiAllocation.accountAvailable ? (
+              <div className="space-y-3">
+                <div className="flex items-end justify-between">
+                  <div>
+                    <div className="label-mono">AI Allocation Limit (hard max)</div>
+                    <div className="mt-1 font-mono text-3xl font-semibold text-primary glow-text">
+                      {money(aiAllocation.limit)}
+                    </div>
                   </div>
+                  <BrainCircuit className="h-6 w-6 text-primary/60" />
                 </div>
-                <BrainCircuit className="h-6 w-6 text-primary/60" />
+                <div className="grid grid-cols-2 gap-2">
+                  <MiniStat label="Effective Allocation" value={money(aiAllocation.effectiveAllocation)} tone="gain" />
+                  <MiniStat label="Allocated" value={money(aiAllocation.allocated)} />
+                  <MiniStat label="Remaining" value={money(aiAllocation.available)} tone="gain" />
+                  <MiniStat label="Account Source" value="BINANCE TESTNET" />
+                </div>
+                <GaugeBar
+                  label="Allocated"
+                  used={aiAllocation.allocated}
+                  cap={aiAllocation.effectiveAllocation}
+                  tone="primary"
+                />
+                <div className="rounded-sm border border-hairline bg-muted/30 px-3 py-2">
+                  <span className="font-mono text-[0.65rem] text-muted-foreground">
+                    Effective allocation = min(Binance Futures available balance, ${aiAllocation.limit}). This is the AI trading limit, NOT the wallet balance.
+                  </span>
+                </div>
               </div>
-              <GaugeBar
-                label="Allocated"
-                used={aiAllocation.allocated}
-                cap={aiAllocation.limit}
-                tone="primary"
-              />
-              <div className="grid grid-cols-2 gap-2">
-                <MiniStat label="Allocated" value={money(aiAllocation.allocated)} />
-                <MiniStat label="Remaining" value={money(aiAllocation.available)} tone="gain" />
+            ) : (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <BrainCircuit className="mb-3 h-8 w-8 text-muted-foreground/40" />
+                <div className="font-mono text-sm text-muted-foreground">ALLOCATION DATA UNAVAILABLE</div>
+                <div className="mt-1 font-mono text-[0.65rem] text-muted-foreground/60">
+                  Binance Futures Testnet account state unavailable — effective allocation is $0.00 (fail closed). No simulated balance is substituted.
+                </div>
               </div>
-              <div className="rounded-sm border border-hairline bg-muted/30 px-3 py-2">
-                <span className="font-mono text-[0.65rem] text-muted-foreground">
-                  This is the AI trading limit, NOT the wallet balance. AI cannot trade more than ${aiAllocation.limit} margin.
-                </span>
-              </div>
-            </div>
+            )
           ) : (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <BrainCircuit className="mb-3 h-8 w-8 text-muted-foreground/40" />
@@ -328,7 +340,7 @@ function Dashboard() {
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="border-b border-hairline">
-                    {["Symbol", "Side", "Size", "Entry", "Mark", "Margin", "Leverage", "Unrealized PnL"].map((h) => (
+                    {["Symbol", "Side", "Size", "Entry", "Mark", "Margin", "Leverage", "Margin Mode", "Unrealized PnL"].map((h) => (
                       <th key={h} className="label-mono px-3 py-2 text-left font-normal text-[0.65rem]">{h}</th>
                     ))}
                   </tr>
@@ -345,6 +357,11 @@ function Dashboard() {
                       <td className="px-3 py-2 font-mono text-xs tabular-nums text-foreground">{money(p.markPrice)}</td>
                       <td className="px-3 py-2 font-mono text-xs tabular-nums text-foreground">{money(p.margin)}</td>
                       <td className="px-3 py-2 font-mono text-xs text-foreground">{p.leverage}x</td>
+                      <td className="px-3 py-2">
+                        <Tag tone={p.marginType === "isolated" ? "gain" : p.marginType === "cross" ? "loss" : "violet"}>
+                          {p.marginType === "isolated" ? "ISOLATED" : p.marginType === "cross" ? "CROSS" : "—"}
+                        </Tag>
+                      </td>
                       <td className={`px-3 py-2 font-mono text-xs tabular-nums font-semibold ${p.unrealizedPnl >= 0 ? "text-gain" : "text-loss"}`}>
                         {money(p.unrealizedPnl)}
                       </td>

@@ -341,6 +341,23 @@ export class BinanceTestnetClient {
     return usdt ? parseFloat(usdt.availableBalance) : 0;
   }
 
+  /**
+   * P7: REAL USDⓈ-M Futures available balance from /fapi/v2/account.
+   * This is the authoritative source for AI effective allocation.
+   */
+  async getRealAvailableBalance(): Promise<number> {
+    const account = await this.getAccountInfo();
+    const available = parseFloat(account.availableBalance);
+    if (!Number.isFinite(available) || available < 0) {
+      throw new BinanceTestnetError(
+        "INVALID_ACCOUNT_STATE",
+        `Invalid available balance from Binance: ${account.availableBalance}`,
+        0,
+      );
+    }
+    return available;
+  }
+
   // ─── Positions ───────────────────────────────────────────────────
 
   async getPositions(): Promise<TestnetPositionResponse[]> {
@@ -369,6 +386,51 @@ export class BinanceTestnetClient {
     });
   }
 
+  // ─── Margin Mode (P7) ─────────────────────────────────────────────
+
+  /**
+   * P7: Determine the symbol's ACTUAL margin mode from Binance.
+   * Returns "isolated" | "cross" | "unknown".
+   * "unknown" when the symbol has no position/open order data, or on API failure
+   * (caller must fail closed).
+   */
+  async getMarginType(
+    symbol: string,
+  ): Promise<"isolated" | "cross" | "unknown"> {
+    try {
+      const result = await this.request<Array<{ symbol: string; marginType: string }>>(
+        "GET",
+        "/fapi/v1/positionRisk",
+        { symbol },
+      );
+      const entry = result.find((p) => p.symbol === symbol);
+      if (!entry) return "unknown";
+      const mt = String(entry.marginType || "").toLowerCase();
+      if (mt === "isolated") return "isolated";
+      if (mt === "cross") return "cross";
+      return "unknown";
+    } catch (err) {
+      logger.warn("binance-testnet", `Cannot determine margin type for ${symbol}: ${err}`);
+      return "unknown";
+    }
+  }
+
+  /**
+   * P7: Set the symbol margin type. Deterministic, symbol-specific.
+   * Used ONLY for symbols with no existing position/open order (pre-trade
+   * configuration). Never used to convert an existing CROSS position.
+   */
+  async setMarginType(
+    symbol: string,
+    marginType: "ISOLATED" | "CROSS",
+  ): Promise<{ code: number; msg: string }> {
+    logger.info("binance-testnet", `Setting margin type: ${symbol} → ${marginType}`);
+    return this.request<{ code: number; msg: string }>("POST", "/fapi/v1/marginType", {
+      symbol,
+      marginType,
+    });
+  }
+
   // ─── Orders ──────────────────────────────────────────────────────
 
   async placeMarketOrder(
@@ -378,23 +440,10 @@ export class BinanceTestnetClient {
   ): Promise<TestnetOrderResponse> {
     logger.info("binance-testnet", `Market order: ${side} ${quantity} ${symbol}`);
 
-    // Pre-flight: wallet balance check
-    const balance = await walletRepository.getBalance();
-    const minBalance = 0.50;
-    if (balance < minBalance) {
-      await walletRepository.logGuardrailEvent(
-        "INSUFFICIENT_FUNDS",
-        "ERROR",
-        `Testnet order blocked: wallet balance $${balance.toFixed(2)} < $${minBalance.toFixed(2)}`,
-        { symbol, side, quantity },
-        balance,
-      );
-      throw new BinanceTestnetError(
-        "INSUFFICIENT_FUNDS",
-        `Insufficient wallet balance: $${balance.toFixed(2)} (min: $${minBalance.toFixed(2)})`,
-        0,
-      );
-    }
+    // P7D-2A: Removed sandbox wallet pre-flight check.
+    // Balance validation is enforced by RiskEngine via effectiveAllocationLimit
+    // which uses real Binance Futures account data. The executor should not
+    // maintain a separate wallet check against a different data source.
 
     const result = await this.request<TestnetOrderResponse>("POST", "/fapi/v1/order", {
       symbol,
@@ -409,7 +458,7 @@ export class BinanceTestnetClient {
       "INFO",
       `Testnet order executed: ${side} ${quantity} ${symbol} (orderId: ${result.orderId})`,
       { orderId: result.orderId, symbol, side, quantity, status: result.status },
-      balance,
+      0,
     );
 
     return result;

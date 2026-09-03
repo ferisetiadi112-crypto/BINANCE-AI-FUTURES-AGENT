@@ -398,4 +398,108 @@ describe("Trading Orchestrator", () => {
       expect(result.trade).toBeNull();
     });
   });
+
+  describe("getBinanceAccountData — P7A real account state", () => {
+    it("derives effective allocation from the real Binance snapshot, not the simulated wallet", async () => {
+      const orch = new TradingOrchestrator("TESTNET");
+      (orch as any).state.testnetReady = true;
+      const fakeExecutor = {
+        getAccountSnapshot: vi.fn().mockResolvedValue({
+          balance: 25,
+          availableBalance: 4,
+          unrealizedPnl: 0.42,
+          marginBalance: 25.42,
+          positions: [],
+        }),
+      };
+      (orch as any).testnetExecutor = fakeExecutor;
+
+      // Simulated/sandbox wallet holds a LARGE balance — it must NOT become the
+      // source of truth for the AI allocation.
+      walletSpy.mockResolvedValue(999);
+      walletSpy.mockClear();
+
+      const data = await orch.getBinanceAccountData();
+
+      expect(data.binanceAccount).toEqual({
+        balance: 25,
+        availableBalance: 4,
+        unrealizedPnl: 0.42,
+        marginBalance: 25.42,
+      });
+      expect(data.aiAllocation.limit).toBe(10);
+      expect(data.aiAllocation.effectiveAllocation).toBe(4);
+      expect(data.aiAllocation.available).toBe(4);
+      expect(data.aiAllocation.accountAvailable).toBe(true);
+      // The simulated wallet was never consulted for account/allocation state
+      expect(walletSpy).not.toHaveBeenCalled();
+    });
+
+    it("surfaces real open positions with actual margin type", async () => {
+      const orch = new TradingOrchestrator("TESTNET");
+      (orch as any).state.testnetReady = true;
+      (orch as any).testnetExecutor = {
+        getAccountSnapshot: vi.fn().mockResolvedValue({
+          balance: 10,
+          availableBalance: 3,
+          unrealizedPnl: 0.1,
+          marginBalance: 10.1,
+          positions: [
+            {
+              symbol: "BTCUSDT",
+              side: "LONG",
+              size: 0.001,
+              entryPrice: 63000,
+              markPrice: 63200,
+              unrealizedPnl: 0.2,
+              leverage: 10,
+              margin: 6.3,
+              marginType: "isolated",
+            },
+          ],
+        }),
+      };
+
+      const data = await orch.getBinanceAccountData();
+
+      expect(data.openPositions).toHaveLength(1);
+      expect(data.openPositions[0]).toMatchObject({
+        symbol: "BTCUSDT",
+        marginType: "isolated",
+      });
+      // Committed margin reduces remaining allocation: 3 - 0 (risk engine has no open margin here)
+      expect(data.aiAllocation.available).toBe(3);
+    });
+
+    it("fail-closes when Binance account state cannot be obtained — no paper/dummy fallback", async () => {
+      const orch = new TradingOrchestrator("TESTNET");
+      (orch as any).state.testnetReady = true;
+      (orch as any).testnetExecutor = {
+        getAccountSnapshot: vi.fn().mockRejectedValue(new Error("API timeout")),
+      };
+
+      const data = await orch.getBinanceAccountData();
+
+      expect(data.binanceAccount).toBeNull();
+      expect(data.openPositions).toEqual([]);
+      expect(data.aiAllocation.accountAvailable).toBe(false);
+      expect(data.aiAllocation.effectiveAllocation).toBe(0);
+      expect(data.aiAllocation.allocated).toBe(0);
+      expect(data.aiAllocation.available).toBe(0);
+      // Hard max is still reported — but no capital is presented as available
+      expect(data.aiAllocation.limit).toBe(10);
+    });
+
+    it("PAPER mode never presents Binance account state as truth", async () => {
+      const orch = new TradingOrchestrator("PAPER");
+
+      const data = await orch.getBinanceAccountData();
+
+      expect(data.binanceAccount).toBeNull();
+      expect(data.openPositions).toEqual([]);
+      expect(data.aiAllocation.accountAvailable).toBe(false);
+      expect(data.aiAllocation.effectiveAllocation).toBe(0);
+      expect(data.aiAllocation.available).toBe(0);
+    });
+  });
 });

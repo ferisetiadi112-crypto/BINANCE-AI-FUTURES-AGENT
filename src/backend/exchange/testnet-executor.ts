@@ -78,6 +78,8 @@ export type TestnetPositionSnapshot = {
   unrealizedPnl: number;
   leverage: number;
   margin: number;
+  /** P7A: actual margin mode reported by Binance — "isolated" | "cross" | "unknown" */
+  marginType: "isolated" | "cross" | "unknown";
 };
 
 export type TestnetAccountSnapshot = {
@@ -314,6 +316,33 @@ export class TestnetExecutor {
     const normalizedQuantity = filterResult.normalizedQuantity;
     const normalizedPrice = filterResult.normalizedPrice;
 
+    // P7D-2A: Margin mode enforcement — ISOLATED only
+    let marginType: "isolated" | "cross" | "unknown" = "unknown";
+    try {
+      marginType = await this.client.getMarginType(symbol);
+    } catch (err) {
+      logger.warn("testnet-executor", `Cannot determine margin type for ${symbol}: ${err}`);
+    }
+
+    if (marginType !== "isolated") {
+      logger.error("testnet-executor", `Margin mode not ISOLATED for ${symbol}: ${marginType} — REJECT`);
+      recordOrderConfirmed(symbol, direction, 0, false, `Margin mode: ${marginType}`);
+      return {
+        success: false,
+        orderId: null,
+        clientOrderId,
+        symbol,
+        side,
+        quantity: 0,
+        price: 0,
+        status: "REJECTED",
+        actualMargin: 0,
+        actualLeverage: 0,
+        error: `Margin mode is not ISOLATED: ${marginType} — execution blocked (fail closed)`,
+        guardrailReason: "MARGIN_MODE_NOT_ISOLATED",
+      };
+    }
+
     // Journal: ORDER_SUBMITTED
     recordOrderSubmitted(symbol, direction, normalizedQuantity, leverage, decisionId);
 
@@ -515,16 +544,22 @@ export class TestnetExecutor {
 
     try {
       const positions = await this.client.getOpenPositions();
-      return positions.map((p) => ({
-        symbol: p.symbol,
-        side: (parseFloat(p.positionAmount) > 0 ? "LONG" : "SHORT") as "LONG" | "SHORT",
-        size: Math.abs(parseFloat(p.positionAmount)),
-        entryPrice: parseFloat(p.entryPrice),
-        markPrice: parseFloat(p.markPrice),
-        unrealizedPnl: parseFloat(p.unRealizedProfit),
-        leverage: parseInt(p.leverage),
-        margin: parseFloat(p.positionInitialMargin),
-      }));
+      return positions.map((p) => {
+        const rawMarginType = String(p.marginType || "").toLowerCase();
+        const marginType: "isolated" | "cross" | "unknown" =
+          rawMarginType === "isolated" ? "isolated" : rawMarginType === "cross" ? "cross" : "unknown";
+        return {
+          symbol: p.symbol,
+          side: (parseFloat(p.positionAmount) > 0 ? "LONG" : "SHORT") as "LONG" | "SHORT",
+          size: Math.abs(parseFloat(p.positionAmount)),
+          entryPrice: parseFloat(p.entryPrice),
+          markPrice: parseFloat(p.markPrice),
+          unrealizedPnl: parseFloat(p.unRealizedProfit),
+          leverage: parseInt(p.leverage),
+          margin: parseFloat(p.positionInitialMargin),
+          marginType,
+        };
+      });
     } catch (error) {
       logger.error("testnet-executor", `Failed to get positions: ${error}`);
       return [];
@@ -594,16 +629,26 @@ export class TestnetExecutor {
     const account = await this.client.getAccountInfo();
     const positions: TestnetPositionSnapshot[] = account.positions
       .filter((p) => parseFloat(p.positionAmount) !== 0)
-      .map((p) => ({
-        symbol: p.symbol,
-        side: (parseFloat(p.positionAmount) > 0 ? "LONG" : "SHORT") as "LONG" | "SHORT",
-        size: Math.abs(parseFloat(p.positionAmount)),
-        entryPrice: parseFloat(p.entryPrice),
-        markPrice: parseFloat(p.markPrice),
-        unrealizedPnl: parseFloat(p.unRealizedProfit),
-        leverage: parseInt(p.leverage),
-        margin: parseFloat(p.positionInitialMargin),
-      }));
+      .map((p) => {
+        const rawMarginType = String(p.marginType || "").toLowerCase();
+        const marginType: "isolated" | "cross" | "unknown" =
+          rawMarginType === "isolated"
+            ? "isolated"
+            : rawMarginType === "cross"
+              ? "cross"
+              : "unknown";
+        return {
+          symbol: p.symbol,
+          side: (parseFloat(p.positionAmount) > 0 ? "LONG" : "SHORT") as "LONG" | "SHORT",
+          size: Math.abs(parseFloat(p.positionAmount)),
+          entryPrice: parseFloat(p.entryPrice),
+          markPrice: parseFloat(p.markPrice),
+          unrealizedPnl: parseFloat(p.unRealizedProfit),
+          leverage: parseInt(p.leverage),
+          margin: parseFloat(p.positionInitialMargin),
+          marginType,
+        };
+      });
 
     return {
       balance: parseFloat(account.totalWalletBalance),

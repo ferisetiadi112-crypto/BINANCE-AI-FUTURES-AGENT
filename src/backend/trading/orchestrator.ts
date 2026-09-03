@@ -36,6 +36,10 @@ import {
   mergeLLMDecisionIntoAiDecision,
 } from "../ai/decision-engine";
 import { RiskEngine, type TradeProposal } from "../risk/engine";
+import {
+  computeEffectiveAllocation,
+  computeAllocationRemaining,
+} from "../risk/allocation";
 import type { P6Decision } from "../research/p6-decision-engine";
 import type { ResearchResult } from "../research/research-engine";
 import { PaperTradingEngine } from "../paper/engine";
@@ -95,6 +99,14 @@ export type OrchestratorState = {
   executionMode: ExecutionMode;
   testnetReady: boolean;
   reconciliationComplete: boolean;
+  /** P7C: Timestamp (ms) of the last successful Binance account-state sync. null = never synced. */
+  lastSuccessfulSync: number | null;
+  /** P7C: Timestamp (ms) of the last sync attempt (success or failure). */
+  lastSyncAttempt: number | null;
+  /** P7C: Error message from the last failed sync attempt. null = no error or last attempt succeeded. */
+  connectionError: string | null;
+  /** P7C: Total consecutive sync failures since last success. */
+  consecutiveSyncFailures: number;
 };
 
 export class TradingOrchestrator {
@@ -150,6 +162,10 @@ export class TradingOrchestrator {
       executionMode,
       testnetReady: false,
       reconciliationComplete: false,
+      lastSuccessfulSync: null,
+      lastSyncAttempt: null,
+      connectionError: null,
+      consecutiveSyncFailures: 0,
     };
 
     this.currentSessionDay = getSessionDay();
@@ -164,6 +180,10 @@ export class TradingOrchestrator {
   async initializeTestnet(): Promise<boolean> {
     if (this.executionMode !== "TESTNET" || !this.testnetExecutor) {
       logger.info("orchestrator", "Testnet mode not enabled — using PAPER mode");
+      // P7C: Track that initialization was attempted but not possible
+      this.state.lastSyncAttempt = Date.now();
+      this.state.connectionError = "Testnet not configured — missing executor or not in TESTNET mode";
+      this.state.consecutiveSyncFailures++;
       return false;
     }
 
@@ -180,7 +200,11 @@ export class TradingOrchestrator {
           `Testnet validation failed: ${validation.errors.join("; ")}`,
         );
         this.state.testnetReady = false;
-        this.state.executionMode = "PAPER"; // Fail closed — fallback to paper
+        // P7A: NO PAPER fallback — execution stays disabled until testnet is healthy
+        // P7C: Track validation failure
+        this.state.lastSyncAttempt = Date.now();
+        this.state.connectionError = validation.errors.join("; ");
+        this.state.consecutiveSyncFailures++;
         return false;
       }
 
@@ -189,9 +213,10 @@ export class TradingOrchestrator {
         `Testnet connected: balance=$${validation.balance.toFixed(2)}`,
       );
 
-      // Sync wallet balance
+      // P7A: Fetch REAL Binance Futures available balance and set effective allocation
       const balance = await this.testnetExecutor.syncBalance();
       this.riskEngine.setWalletBalance(balance);
+      this.riskEngine.setEffectiveAllocationLimit(balance);
 
       // Reconcile positions
       const localPositions = this.getLocalPositions();
@@ -217,6 +242,11 @@ export class TradingOrchestrator {
 
       this.state.testnetReady = true;
       this.state.reconciliationComplete = true;
+      // P7C: Record successful sync — timestamp only set after verified Binance response
+      this.state.lastSuccessfulSync = Date.now();
+      this.state.lastSyncAttempt = Date.now();
+      this.state.connectionError = null;
+      this.state.consecutiveSyncFailures = 0;
 
       recordStartupReconciliation(
         true,
@@ -232,8 +262,13 @@ export class TradingOrchestrator {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error("orchestrator", `Testnet initialization failed: ${msg}`);
       recordStartupReconciliation(false, `Initialization failed: ${msg}`);
+      // P7A: Fail closed — NO PAPER fallback. Trading stays disabled.
       this.state.testnetReady = false;
-      this.state.executionMode = "PAPER"; // Fail closed
+      // P7C: Record failure state
+      this.state.lastSyncAttempt = Date.now();
+      this.state.connectionError = msg;
+      this.state.consecutiveSyncFailures++;
+      // executionMode stays TESTNET but testnetReady=false → execution blocked
       return false;
     }
   }
@@ -314,8 +349,26 @@ export class TradingOrchestrator {
     this.state.marketState = marketState;
     this.state.feedStatus = marketState.feedStatus;
 
-    // Phase 9D: Sync wallet balance to Risk Engine
-    const walletBalance = await walletRepository.getBalance();
+    // P7A: Sync REAL Binance Futures balance to Risk Engine in TESTNET mode.
+    // In PAPER mode, use sandbox wallet. In TESTNET, Binance is source of truth.
+    let walletBalance: number;
+    if (this.executionMode === "TESTNET" && this.testnetExecutor && this.state.testnetReady) {
+      try {
+        const realBalance = await this.testnetExecutor.syncBalance();
+        walletBalance = realBalance;
+        this.riskEngine.setEffectiveAllocationLimit(realBalance);
+      } catch (err) {
+        logger.warn("orchestrator", `Failed to sync real Futures balance: ${err}`);
+        walletBalance = 0;
+        this.riskEngine.setEffectiveAllocationLimit(0); // Fail closed
+        // P7C: Track sync failure in connection state
+        this.state.lastSyncAttempt = Date.now();
+        this.state.connectionError = err instanceof Error ? err.message : String(err);
+        this.state.consecutiveSyncFailures++;
+      }
+    } else {
+      walletBalance = await walletRepository.getBalance();
+    }
     this.riskEngine.setWalletBalance(walletBalance);
 
     // Record market scan event
@@ -534,8 +587,26 @@ export class TradingOrchestrator {
     this.state.marketState = marketState;
     this.state.feedStatus = marketState.feedStatus;
 
-    // Phase 9D: Sync wallet balance to Risk Engine
-    const walletBalance = await walletRepository.getBalance();
+    // P7A: Sync REAL Binance Futures balance to Risk Engine in TESTNET mode.
+    // In PAPER mode, use sandbox wallet. In TESTNET, Binance is source of truth.
+    let walletBalance: number;
+    if (this.executionMode === "TESTNET" && this.testnetExecutor && this.state.testnetReady) {
+      try {
+        const realBalance = await this.testnetExecutor.syncBalance();
+        walletBalance = realBalance;
+        this.riskEngine.setEffectiveAllocationLimit(realBalance);
+      } catch (err) {
+        logger.warn("orchestrator", `Failed to sync real Futures balance: ${err}`);
+        walletBalance = 0;
+        this.riskEngine.setEffectiveAllocationLimit(0); // Fail closed
+        // P7C: Track sync failure in connection state
+        this.state.lastSyncAttempt = Date.now();
+        this.state.connectionError = err instanceof Error ? err.message : String(err);
+        this.state.consecutiveSyncFailures++;
+      }
+    } else {
+      walletBalance = await walletRepository.getBalance();
+    }
     this.riskEngine.setWalletBalance(walletBalance);
 
     // Record market scan event
@@ -859,8 +930,8 @@ export class TradingOrchestrator {
         ? currentPrice * 1.04
         : currentPrice * 0.96;
 
-    // Calculate quantity based on available capital
-    const availableCapital = this.riskEngine.getAiAllocationLimit() - this.riskEngine.getOpenPositionMargin();
+    // P7A: Calculate quantity based on effective allocation (from real Binance balance)
+    const availableCapital = this.riskEngine.getEffectiveAllocationLimit() - this.riskEngine.getOpenPositionMargin();
     const marginToUse = Math.min(availableCapital, availableCapital * 0.5); // Use 50% of available
     const notional = marginToUse * leverage;
     const quantity = Math.floor((notional / currentPrice) * 1000) / 1000; // Round to 3 decimals
@@ -1213,7 +1284,7 @@ export class TradingOrchestrator {
               research,
               snapshot,
               existingMargin,
-              this.riskEngine.getAiAllocationLimit(),
+              this.riskEngine.getEffectiveAllocationLimit(),
             );
             bestResearch = research;
           }
@@ -1529,6 +1600,33 @@ export class TradingOrchestrator {
    * - Binance Balance = real money in the testnet account
    * - AI Allocation = how much the AI is allowed to use ($10 max)
    */
+  /**
+   * P7C: Get the authoritative connection-state model.
+   * Returned to both the dashboard API and getBinanceAccountData.
+   */
+  getConnectionState(): {
+    configured: boolean;
+    testnetReady: boolean;
+    lastSuccessfulSync: number | null;
+    lastSyncAttempt: number | null;
+    connectionError: string | null;
+    consecutiveSyncFailures: number;
+    isStale: boolean;
+  } {
+    const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes — if no sync in 5 min, data is stale
+    const lastSync = this.state.lastSuccessfulSync;
+    const isStale = lastSync === null || (Date.now() - lastSync) > STALE_THRESHOLD_MS;
+    return {
+      configured: this.executionMode === "TESTNET" && this.testnetExecutor !== null,
+      testnetReady: this.state.testnetReady,
+      lastSuccessfulSync: this.state.lastSuccessfulSync,
+      lastSyncAttempt: this.state.lastSyncAttempt,
+      connectionError: this.state.connectionError,
+      consecutiveSyncFailures: this.state.consecutiveSyncFailures,
+      isStale,
+    };
+  }
+
   async getBinanceAccountData(): Promise<{
     binanceAccount: {
       balance: number;
@@ -1538,8 +1636,12 @@ export class TradingOrchestrator {
     } | null;
     aiAllocation: {
       limit: number;
+      /** min(real Futures USDⓈ-M available balance, $10) — 0 when account state is unavailable (fail closed) */
+      effectiveAllocation: number;
       allocated: number;
       available: number;
+      /** false when Binance account state could not be obtained — allocation is NOT tradeable */
+      accountAvailable: boolean;
     };
     openPositions: Array<{
       symbol: string;
@@ -1550,6 +1652,7 @@ export class TradingOrchestrator {
       unrealizedPnl: number;
       leverage: number;
       margin: number;
+      marginType: "isolated" | "cross" | "unknown";
     }>;
     riskState: {
       dailyPnl: number;
@@ -1560,48 +1663,62 @@ export class TradingOrchestrator {
       cooldownEndsAt: number | null;
       hardCapReached: boolean;
     };
+    /** P7C: Connection state — truthful status of Binance Testnet connectivity */
+    connectionState: ReturnType<TradingOrchestrator["getConnectionState"]>;
   }> {
     const riskState = this.riskEngine.getDailyStats();
-    const aiAllocation = {
-      limit: this.riskEngine.getAiAllocationLimit(),
-      allocated: this.riskEngine.getOpenPositionMargin(),
-      available: this.riskEngine.getAiAllocationLimit() - this.riskEngine.getOpenPositionMargin(),
-    };
+    const hardLimit = this.riskEngine.getAiAllocationLimit();
 
-    if (this.executionMode !== "TESTNET" || !this.testnetExecutor || !this.state.testnetReady) {
-      return {
-        binanceAccount: null,
-        aiAllocation,
-        openPositions: [],
-        riskState: {
-          dailyPnl: riskState.pnl,
-          sessionPnl: riskState.sessionPnl,
-          isLocked: riskState.locked,
-          lockReason: riskState.lockReason,
-          cooldownActive: riskState.cooldownActive,
-          cooldownEndsAt: riskState.cooldownEndsAt,
-          hardCapReached: riskState.hardCapReached,
-        },
-      };
-    }
-
-    // Get REAL Binance account data
+    // P7A: effective allocation = min(REAL Futures USDⓈ-M available balance, $10).
+    // The simulated/sandbox wallet (walletRepository) is NEVER used here — Binance
+    // Testnet is the only source of truth for account state.
+    let effectiveAllocation = 0;
+    let accountAvailable = false;
     let binanceAccount: { balance: number; availableBalance: number; unrealizedPnl: number; marginBalance: number } | null = null;
-    let openPositions: Array<{ symbol: string; side: string; size: number; entryPrice: number; markPrice: number; unrealizedPnl: number; leverage: number; margin: number }> = [];
+    let openPositions: Array<{ symbol: string; side: string; size: number; entryPrice: number; markPrice: number; unrealizedPnl: number; leverage: number; margin: number; marginType: "isolated" | "cross" | "unknown" }> = [];
 
-    try {
-      const snapshot = await this.testnetExecutor.getAccountSnapshot();
-      binanceAccount = {
-        balance: snapshot.balance,
-        availableBalance: snapshot.availableBalance,
-        unrealizedPnl: snapshot.unrealizedPnl,
-        marginBalance: snapshot.marginBalance,
-      };
-      openPositions = snapshot.positions;
-    } catch (err) {
-      logger.error("orchestrator", `Failed to get Binance account data: ${err}`);
-      // binanceAccount remains null — dashboard shows "BINANCE DATA UNAVAILABLE"
+    if (this.executionMode === "TESTNET" && this.testnetExecutor && this.state.testnetReady) {
+      try {
+        const snapshot = await this.testnetExecutor.getAccountSnapshot();
+        binanceAccount = {
+          balance: snapshot.balance,
+          availableBalance: snapshot.availableBalance,
+          unrealizedPnl: snapshot.unrealizedPnl,
+          marginBalance: snapshot.marginBalance,
+        };
+        openPositions = snapshot.positions;
+        effectiveAllocation = computeEffectiveAllocation(snapshot.availableBalance);
+        accountAvailable = true;
+      } catch (err) {
+        logger.error("orchestrator", `Failed to get Binance account data: ${err}`);
+        // P7C: Track sync failure
+        this.state.lastSyncAttempt = Date.now();
+        this.state.connectionError = err instanceof Error ? err.message : String(err);
+        this.state.consecutiveSyncFailures++;
+        // binanceAccount stays null → dashboard shows "BINANCE TESTNET OFFLINE"
+        // effectiveAllocation stays 0 → fail closed: no capital is presented as available
+      }
+
+      // P7C: Track sync success (only if binanceAccount was obtained)
+      if (binanceAccount !== null) {
+        this.state.lastSuccessfulSync = Date.now();
+        this.state.lastSyncAttempt = Date.now();
+        this.state.connectionError = null;
+        this.state.consecutiveSyncFailures = 0;
+      }
+    } else {
+      // P7C: Not in TESTNET mode — mark sync attempt but not an error
+      this.state.lastSyncAttempt = Date.now();
     }
+
+    const allocated = accountAvailable ? this.riskEngine.getOpenPositionMargin() : 0;
+    const aiAllocation = {
+      limit: hardLimit,
+      effectiveAllocation,
+      allocated,
+      available: computeAllocationRemaining(effectiveAllocation, allocated),
+      accountAvailable,
+    };
 
     return {
       binanceAccount,
@@ -1616,6 +1733,7 @@ export class TradingOrchestrator {
         cooldownEndsAt: riskState.cooldownEndsAt,
         hardCapReached: riskState.hardCapReached,
       },
+      connectionState: this.getConnectionState(),
     };
   }
 

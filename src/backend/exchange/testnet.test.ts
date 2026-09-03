@@ -191,8 +191,9 @@ describe("Risk Engine — Wallet Balance for Testnet (Phase 9E)", () => {
     expect(result.approved).toBe(true);
   });
 
-  it("rejects trade with insufficient wallet balance", () => {
-    engine.setWalletBalance(0.3);
+  it("rejects trade with insufficient effective allocation", () => {
+    // P7A: wallet check uses effectiveAllocationLimit (from real Binance Futures balance)
+    engine.setEffectiveAllocationLimit(0.3);
     const result = engine.check(mockDecision, mockMarketState, {
       symbol: "BTCUSDT",
       side: "FLAT",

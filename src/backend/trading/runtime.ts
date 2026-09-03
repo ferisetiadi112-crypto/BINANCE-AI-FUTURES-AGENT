@@ -310,11 +310,13 @@ export async function startTradingRuntime(
     _stats.testnetReady = testnetReady;
 
     if (!testnetReady) {
-      logger.warn(
+      // P7A: NO PAPER fallback — execution stays disabled until testnet is healthy.
+      // Trading is blocked because testnetReady=false. Research/journal continue.
+      logger.error(
         "trading-runtime",
-        "Testnet initialization failed — falling back to PAPER mode",
+        "Testnet initialization failed — execution DISABLED (fail closed). No PAPER fallback.",
       );
-      _stats.executionMode = "PAPER";
+      // executionMode stays TESTNET, testnetReady stays false → execution blocked
     }
   }
 

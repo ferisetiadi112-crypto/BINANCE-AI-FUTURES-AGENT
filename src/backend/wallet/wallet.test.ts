@@ -260,8 +260,9 @@ describe("Risk Engine — Wallet Balance Check (Phase 9D)", () => {
     });
   });
 
-  it("approves trade when wallet balance is above minimum", () => {
-    engine.setWalletBalance(5.0);
+  it("approves trade when effective allocation is above minimum", () => {
+    // P7A: wallet check now uses effectiveAllocationLimit (from real Binance Futures balance)
+    engine.setEffectiveAllocationLimit(5.0);
     const result = engine.check(mockDecision, mockMarketState, {
       symbol: "BTCUSDT",
       side: "FLAT",
@@ -273,8 +274,9 @@ describe("Risk Engine — Wallet Balance Check (Phase 9D)", () => {
     expect(walletCheck!.passed).toBe(true);
   });
 
-  it("blocks trade when wallet balance is below minimum", () => {
-    engine.setWalletBalance(0.3);
+  it("blocks trade when effective allocation is below minimum", () => {
+    // P7A: wallet check now uses effectiveAllocationLimit (from real Binance Futures balance)
+    engine.setEffectiveAllocationLimit(0.3);
     const result = engine.check(mockDecision, mockMarketState, {
       symbol: "BTCUSDT",
       side: "FLAT",
@@ -285,12 +287,13 @@ describe("Risk Engine — Wallet Balance Check (Phase 9D)", () => {
     const walletCheck = result.checks.find((c) => c.name === "wallet_balance");
     expect(walletCheck).toBeDefined();
     expect(walletCheck!.passed).toBe(false);
-    expect(walletCheck!.message).toContain("Insufficient wallet balance");
+    expect(walletCheck!.message).toContain("below minimum");
     expect(walletCheck!.message).toContain("$0.30");
   });
 
-  it("blocks trade when wallet balance is exactly zero", () => {
-    engine.setWalletBalance(0);
+  it("blocks trade when effective allocation is exactly zero (fail closed)", () => {
+    // P7A: wallet check now uses effectiveAllocationLimit — zero means Binance unavailable
+    engine.setEffectiveAllocationLimit(0);
     const result = engine.check(mockDecision, mockMarketState, {
       symbol: "BTCUSDT",
       side: "FLAT",
@@ -302,8 +305,9 @@ describe("Risk Engine — Wallet Balance Check (Phase 9D)", () => {
     expect(walletCheck!.passed).toBe(false);
   });
 
-  it("reports correct wallet balance in check message", () => {
-    engine.setWalletBalance(2.75);
+  it("reports effective allocation in check message", () => {
+    // P7A: wallet check now uses effectiveAllocationLimit
+    engine.setEffectiveAllocationLimit(2.75);
     const result = engine.check(mockDecision, mockMarketState, {
       symbol: "BTCUSDT",
       side: "FLAT",
@@ -336,8 +340,10 @@ describe("Risk Engine — Wallet Balance Check (Phase 9D)", () => {
     expect(engine.getWalletBalance()).toBe(3.14);
   });
 
-  it("has default wallet balance equal to aiAllocationLimit", () => {
+  it("has default wallet balance and effective allocation equal to aiAllocationLimit", () => {
+    // P7A: effective allocation defaults to aiAllocationLimit, updated when Binance data arrives
     expect(engine.getWalletBalance()).toBe(10.0);
+    expect(engine.getEffectiveAllocationLimit()).toBe(10.0);
   });
 
   it("wallet check is always present in checks array", () => {

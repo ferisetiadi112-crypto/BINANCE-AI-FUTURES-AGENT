@@ -356,12 +356,23 @@ export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
       }
     }
 
+    // P7C: Include truthful connection-state from orchestrator
+    const orchestrator = getOrchestrator();
+    const connectionState = orchestrator?.getConnectionState() ?? null;
+
     return wrap({
       configured,
       connected,
       balance,
       positions,
       paperTrading: process.env["PAPER_TRADING"] !== "false",
+      // P7C fields
+      testnetReady: connectionState?.testnetReady ?? false,
+      lastSuccessfulSync: connectionState?.lastSuccessfulSync ?? null,
+      lastSyncAttempt: connectionState?.lastSyncAttempt ?? null,
+      connectionError: connectionState?.connectionError ?? null,
+      consecutiveSyncFailures: connectionState?.consecutiveSyncFailures ?? 0,
+      isStale: connectionState?.isStale ?? true,
     });
   },
 );
@@ -413,6 +424,8 @@ export const getOrchestratorData = createServerFn({ method: "GET" }).handler(
       recentActivity: orchestrator.getRecentActivity(),
       executionMode: orchestrator.getExecutionMode(),
       testnetReady: orchestrator.isTestnetReady(),
+      // P7C: Include truthful connection-state
+      connectionState: orchestrator.getConnectionState(),
     });
   },
 );

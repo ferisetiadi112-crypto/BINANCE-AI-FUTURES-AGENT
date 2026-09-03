@@ -113,9 +113,17 @@ export class RiskEngine {
   private openPositionMargin = 0;
   private openPositionCount = 0;
 
+  /**
+   * P7: Effective allocation limit = min(real Futures available balance, aiAllocationLimit).
+   * Defaults to the configured max ($10). Set to 0 when Binance account state is
+   * unavailable → fail closed. Never exceeds the authoritative $10 cap.
+   */
+  private effectiveAllocationLimit: number;
+
   constructor(config: Partial<RiskConfig> = {}) {
     this.config = { ...DEFAULT_RISK_CONFIG, ...config };
     this.walletBalance = this.config.aiAllocationLimit;
+    this.effectiveAllocationLimit = this.config.aiAllocationLimit;
   }
 
   // ─── Wallet Balance ─────────────────────────────────────────────
@@ -140,6 +148,22 @@ export class RiskEngine {
 
   getAiAllocationLimit(): number {
     return this.config.aiAllocationLimit;
+  }
+
+  /**
+   * P7: Set the effective allocation limit based on REAL Futures available balance.
+   * Clamped to [0, aiAllocationLimit]. A value of 0 fail-closes trading.
+   */
+  setEffectiveAllocationLimit(limit: number): void {
+    if (!Number.isFinite(limit) || limit <= 0) {
+      this.effectiveAllocationLimit = 0;
+      return;
+    }
+    this.effectiveAllocationLimit = Math.min(limit, this.config.aiAllocationLimit);
+  }
+
+  getEffectiveAllocationLimit(): number {
+    return this.effectiveAllocationLimit;
   }
 
   getMaxLeverage(): number {
@@ -461,18 +485,20 @@ export class RiskEngine {
     const notional = price * quantity;
     const margin = notional / leverage;
 
-    if (margin > this.config.aiAllocationLimit) {
+    const effectiveLimit = this.getEffectiveAllocationLimit();
+
+    if (margin > effectiveLimit) {
       return {
         valid: false,
-        reason: `Margin $${margin.toFixed(2)} exceeds AI allocation limit $${this.config.aiAllocationLimit}`,
+        reason: `Margin $${margin.toFixed(2)} exceeds effective AI allocation limit $${effectiveLimit.toFixed(2)} (max: $${this.config.aiAllocationLimit})`,
         margin,
       };
     }
 
-    if (this.openPositionMargin + margin > this.config.aiAllocationLimit) {
+    if (this.openPositionMargin + margin > effectiveLimit) {
       return {
         valid: false,
-        reason: `Total allocation $${(this.openPositionMargin + margin).toFixed(2)} would exceed $${this.config.aiAllocationLimit} limit`,
+        reason: `Total allocation $${(this.openPositionMargin + margin).toFixed(2)} would exceed effective limit $${effectiveLimit.toFixed(2)} (max: $${this.config.aiAllocationLimit})`,
         margin,
       };
     }
@@ -654,17 +680,27 @@ export class RiskEngine {
   }
 
   private checkWalletBalance(): RiskCheckResult["checks"][0] {
-    if (this.walletBalance < this.config.minWalletBalance) {
+    // P7A: Use effective allocation limit (from real Binance Futures balance)
+    // NOT the sandbox wallet balance. If effectiveAllocation is 0, fail closed.
+    const effectiveLimit = this.getEffectiveAllocationLimit();
+    if (effectiveLimit <= 0) {
       return {
         name: "wallet_balance",
         passed: false,
-        message: `Insufficient wallet balance: $${this.walletBalance.toFixed(2)} (min: $${this.config.minWalletBalance.toFixed(2)})`,
+        message: `Effective allocation is $0.00 — Binance Futures balance unavailable or zero; trading blocked (fail closed)`,
+      };
+    }
+    if (effectiveLimit < this.config.minWalletBalance) {
+      return {
+        name: "wallet_balance",
+        passed: false,
+        message: `Effective allocation $${effectiveLimit.toFixed(2)} is below minimum $${this.config.minWalletBalance.toFixed(2)} — trading blocked`,
       };
     }
     return {
       name: "wallet_balance",
       passed: true,
-      message: `Wallet balance: $${this.walletBalance.toFixed(2)}`,
+      message: `Effective allocation: $${effectiveLimit.toFixed(2)} (hard max: $${this.config.aiAllocationLimit})`,
     };
   }
 
@@ -717,17 +753,18 @@ export class RiskEngine {
     passed: boolean;
     message: string;
   } {
-    if (totalAllocated > this.config.aiAllocationLimit) {
+    const effectiveLimit = this.getEffectiveAllocationLimit();
+    if (totalAllocated > effectiveLimit) {
       return {
         name: "capital_allocation",
         passed: false,
-        message: `Total allocation $${totalAllocated.toFixed(2)} would exceed $${this.config.aiAllocationLimit} limit (current: $${this.openPositionMargin.toFixed(2)}, proposed: $${proposedMargin.toFixed(2)})`,
+        message: `Total allocation $${totalAllocated.toFixed(2)} would exceed effective limit $${effectiveLimit.toFixed(2)} (current: $${this.openPositionMargin.toFixed(2)}, proposed: $${proposedMargin.toFixed(2)}; hard max: $${this.config.aiAllocationLimit})`,
       };
     }
     return {
       name: "capital_allocation",
       passed: true,
-      message: `Capital: $${totalAllocated.toFixed(2)} / $${this.config.aiAllocationLimit} allocated`,
+      message: `Capital: $${totalAllocated.toFixed(2)} / $${effectiveLimit.toFixed(2)} allocated (hard max: $${this.config.aiAllocationLimit})`,
     };
   }
 
@@ -975,6 +1012,7 @@ export class RiskEngine {
       openPositionMargin: this.openPositionMargin,
       openPositionCount: this.openPositionCount,
       aiAllocationLimit: this.config.aiAllocationLimit,
+      effectiveAllocationLimit: this.effectiveAllocationLimit,
     };
   }
 }
