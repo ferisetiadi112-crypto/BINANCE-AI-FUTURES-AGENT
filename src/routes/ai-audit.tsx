@@ -26,7 +26,16 @@ function AiAudit() {
   const auditMonths = data?.monthlyAudit || [];
   const evolution = data?.aiEvolution || [];
 
-  // P7D-4.4: No full-page loading blocker
+  if (isLoading || !data) {
+    return (
+      <div className="mx-auto max-w-[110rem]">
+        <PageHeader eyebrow="Review · Long-Term Audit" title="AI Audit" desc="Loading..." />
+        <div className="flex items-center justify-center py-20">
+          <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-[110rem]">
@@ -35,13 +44,6 @@ function AiAudit() {
         title="AI Audit"
         desc="Performance audit across all dimensions: win rate, profit factor, drawdown, and decision quality."
       />
-
-      {isLoading && !data && (
-        <div className="flex items-center gap-3 rounded-sm border border-primary/20 bg-primary/5 px-4 py-3 mb-3">
-          <div className="pulse-dot h-3 w-3 rounded-full bg-primary" />
-          <span className="font-mono text-xs text-muted-foreground">Loading audit data...</span>
-        </div>
-      )}
 
       <div className="grid gap-3 lg:grid-cols-4">
         <Stat label="Overall Win Rate" value="68.4%" sub="6-month average" tone="gain" icon={<TargetIcon className="h-4 w-4" />} />

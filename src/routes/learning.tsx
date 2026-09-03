@@ -24,7 +24,16 @@ function Learning() {
 
   const data = response?.data;
 
-  // P7D-4.4: No full-page loading blocker
+  if (isLoading || !data) {
+    return (
+      <div className="mx-auto max-w-[110rem]">
+        <PageHeader eyebrow="Cognition · Memory Core" title="AI Learning" desc="Loading..." />
+        <div className="flex items-center justify-center py-20">
+          <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-[110rem]">
@@ -33,13 +42,6 @@ function Learning() {
         title="AI Learning"
         desc="How the agent learns from trade outcomes, adapts its strategies, and improves over time."
       />
-
-      {isLoading && !data && (
-        <div className="flex items-center gap-3 rounded-sm border border-primary/20 bg-primary/5 px-4 py-3 mb-3">
-          <div className="pulse-dot h-3 w-3 rounded-full bg-primary" />
-          <span className="font-mono text-xs text-muted-foreground">Loading learning data...</span>
-        </div>
-      )}
 
       <div className="grid gap-3 lg:grid-cols-4">
         <Stat label="Experiences" value={String(data.experiences?.length || 0)} sub="Recorded patterns" icon={<BrainCircuit className="h-4 w-4" />} />

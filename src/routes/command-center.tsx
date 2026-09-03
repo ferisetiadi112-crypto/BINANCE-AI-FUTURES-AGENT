@@ -147,7 +147,23 @@ function CommandCenter() {
     setWithdrawNote("");
   };
 
-  // P7D-4.4: No full-page loading blocker
+  if (walletLoading || auditLoading) {
+    return (
+      <div className="mx-auto max-w-[110rem]">
+        <PageHeader
+          eyebrow="System · Command Center"
+          title="Command Center"
+          desc="Loading..."
+        />
+        <div className="flex items-center justify-center py-20">
+          <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
+          <span className="ml-3 font-mono text-sm text-muted-foreground">
+            Initializing command center...
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-[110rem]">
@@ -157,12 +173,6 @@ function CommandCenter() {
         desc="Sandbox wallet management, guardrail activity, and audit trail. The AI agent has zero permission to modify wallet balances."
       />
 
-      {(walletLoading || auditLoading) && !walletResponse && !auditResponse && (
-        <div className="flex items-center gap-3 rounded-sm border border-primary/20 bg-primary/5 px-4 py-3 mb-3">
-          <div className="pulse-dot h-3 w-3 rounded-full bg-primary" />
-          <span className="font-mono text-xs text-muted-foreground">Initializing command center...</span>
-        </div>
-      )}
       {/* ─── Wallet Stats ──────────────────────────────────────── */}
       <div className="grid gap-3 lg:grid-cols-4">
         <Stat

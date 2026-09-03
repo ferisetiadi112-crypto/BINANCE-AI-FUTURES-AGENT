@@ -358,35 +358,27 @@ export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
     if (configured) {
       const client = executor.getClient();
       if (client) {
-        // If not connected yet, attempt to connect with timeout
+        // If not connected yet, attempt to connect
         if (!client.isConnected()) {
           try {
-            await Promise.race([
-              client.connect(),
-              new Promise<never>((_, reject) => setTimeout(() => reject(new Error("connect timeout")), 5_000)),
-            ]);
+            await client.connect();
           } catch {
-            // Connection attempt failed or timed out — will be reported below
+            // Connection attempt failed — will be reported below
           }
         }
         connected = client.isConnected();
         if (connected) {
-          // P7D-4.4: Run all Binance API calls in parallel with individual timeouts
-          const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
-            Promise.race([p, new Promise<never>((_, r) => setTimeout(() => r(new Error("timeout")), ms))]);
-
-          const [snapshotResult, ordersResult, pnlResult] = await Promise.allSettled([
-            withTimeout(executor.getAccountSnapshot(), 8_000),
-            withTimeout(client.getOpenOrders(), 8_000),
-            withTimeout(executor.getRealizedPnl(), 8_000),
-          ]);
-
-          if (snapshotResult.status === "fulfilled") {
-            balance = snapshotResult.value.balance;
-            positions = snapshotResult.value.positions;
+          try {
+            const snapshot = await executor.getAccountSnapshot();
+            balance = snapshot.balance;
+            positions = snapshot.positions;
+          } catch {
+            // Account query failed
           }
-          if (ordersResult.status === "fulfilled") {
-            openOrders = ordersResult.value.map((o) => ({
+          // Fetch open orders from Binance Testnet (READ-ONLY)
+          try {
+            const orders = await client.getOpenOrders();
+            openOrders = orders.map((o) => ({
               orderId: o.orderId,
               symbol: o.symbol,
               side: o.side,
@@ -395,11 +387,14 @@ export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
               price: o.price,
               status: o.status,
             }));
+          } catch {
+            // Open orders query failed — not critical
           }
-          if (pnlResult.status === "fulfilled") {
-            realizedPnl = pnlResult.value.value;
-            realizedPnlStatus = pnlResult.value.status;
-          }
+          // P7D-3-FIX-REALIZED-PNL-2: Fetch realized PnL from Binance /fapi/v1/income
+          // Returns structured result: SUCCESS (value=number|null), ERROR, UNAVAILABLE
+          const pnlResult = await executor.getRealizedPnl();
+          realizedPnl = pnlResult.value;
+          realizedPnlStatus = pnlResult.status;
         }
       }
     }

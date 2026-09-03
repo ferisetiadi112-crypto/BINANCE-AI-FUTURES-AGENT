@@ -112,16 +112,15 @@ const IMPORTANCE_TONE: Record<string, "gain" | "loss" | "warn" | "cyan" | "defau
 // ─── Dashboard ──────────────────────────────────────────────────────
 
 function Dashboard() {
-  // P7D-4.4: Reduced polling intervals + added enabled flags for startup phase
   const { data: testnetResp } = useQuery({
     queryKey: ["testnet-status"],
     queryFn: fetchTestnetStatus,
-    refetchInterval: 15_000, // Was 10s
+    refetchInterval: 10_000,
   });
   const { data: runtimeResp } = useQuery({
     queryKey: ["runtime"],
     queryFn: fetchRuntime,
-    refetchInterval: 20_000, // Was 15s
+    refetchInterval: 15_000,
   });
   const { data: systemResp } = useQuery({
     queryKey: ["system"],
@@ -134,7 +133,7 @@ function Dashboard() {
   const { data: journalResp } = useQuery({
     queryKey: ["journal"],
     queryFn: fetchJournal,
-    refetchInterval: 10_000, // Was 5s
+    refetchInterval: 5_000,
   });
   const { data: reviewsResp } = useQuery({
     queryKey: ["reviews"],
@@ -144,7 +143,7 @@ function Dashboard() {
   const { data: orchResp } = useQuery({
     queryKey: ["orchestrator"],
     queryFn: fetchOrchestratorData,
-    refetchInterval: 15_000, // Was 10s
+    refetchInterval: 10_000,
   });
 
   const testnet = testnetResp?.data;
@@ -164,8 +163,18 @@ function Dashboard() {
   const isConnected = testnet?.connected;
   const executionMode = orch?.executionMode || "PAPER";
 
-  // P7D-4.4: No full-page loading blocker — render UI shell immediately
-  // Data sections show inline loading states when data isn't available yet
+  // ── Loading state ──
+  if (!orch && !runtime) {
+    return (
+      <div className="mx-auto max-w-[110rem]">
+        <PageHeader eyebrow="Sector 07 · Command Deck" title="Loading..." desc="Connecting to trading system..." />
+        <div className="flex items-center justify-center py-20">
+          <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
+          <span className="ml-3 font-mono text-sm text-muted-foreground">Initializing systems...</span>
+        </div>
+      </div>
+    );
+  }
 
   const systemStatus = riskState?.isLocked
     ? riskState.hardCapReached

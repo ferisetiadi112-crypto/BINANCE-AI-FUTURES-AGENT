@@ -4,13 +4,12 @@ import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { startTradingRuntime } from "./backend/trading/runtime";
 import { initializeDatabase } from "./backend/database";
-import { logger } from "./backend/logger";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
 };
 
-// P7D-4.4: Track if background init has been kicked off (fire-and-forget)
+// Activate trading runtime on server boot (singleton — safe to call once)
 let runtimeStarted = false;
 
 /**
@@ -47,41 +46,6 @@ async function getServerEntry(): Promise<ServerEntry> {
   return serverEntryPromise;
 }
 
-// ─── Non-blocking background initialization ──────────────────────────
-// P7D-4.4: Runtime init runs in the background so the first HTTP request
-// is NOT blocked. Pages show "System starting" state until ready.
-
-let _runtimeReady = false;
-let _runtimeInitPromise: Promise<void> | null = null;
-
-export function isRuntimeReady(): boolean {
-  return _runtimeReady;
-}
-
-async function initializeRuntimeInBackground(): Promise<void> {
-  if (_runtimeInitPromise) return _runtimeInitPromise;
-
-  _runtimeInitPromise = (async () => {
-    const startTime = Date.now();
-    const mode = detectExecutionMode();
-    const tradingEnabled = detectTradingEnabled();
-    logger.info("server", `Background init: mode=${mode}, tradingEnabled=${tradingEnabled}` as string);
-
-    try {
-      await initializeDatabase();
-      logger.info("server", `Database initialized in ${Date.now() - startTime}ms`);
-      await startTradingRuntime(mode, tradingEnabled);
-      logger.info("server", `Runtime started in ${Date.now() - startTime}ms: mode=${mode}`);
-      _runtimeReady = true;
-    } catch (err) {
-      logger.error("server", `Background runtime init failed: ${err}`);
-      // Runtime not ready — pages will show degraded state, not blocked
-    }
-  })();
-
-  return _runtimeInitPromise;
-}
-
 // h3 swallows in-handler throws into a normal 500 Response with body
 // {"unhandled":true,"message":"HTTPError"} — try/catch alone never fires for those.
 async function normalizeCatastrophicSsrResponse(response: Response): Promise<Response> {
@@ -111,12 +75,24 @@ function isH3SwallowedErrorBody(body: string): boolean {
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
-      // P7D-4.4: Start background init on first request (non-blocking).
-      // Pages render immediately; runtime data appears when ready.
+      // Start trading runtime on first request (singleton, idempotent)
       if (!runtimeStarted) {
         runtimeStarted = true;
-        // Fire-and-forget: don't await — let requests flow through
-        initializeRuntimeInBackground();
+        const mode = detectExecutionMode();
+        const tradingEnabled = detectTradingEnabled();
+        console.log(`[server] Starting runtime: mode=${mode}, tradingEnabled=${tradingEnabled}`);
+        try {
+          // P7D-3-FIX-CONNECTION-DIAGNOSTIC-2: Initialize database BEFORE runtime
+          // This ensures PostgreSQL migrations (accounts, positions, orders, etc.)
+          // are created before any code tries to query them.
+          await initializeDatabase();
+          console.log(`[server] Database initialized`);
+          await startTradingRuntime(mode, tradingEnabled);
+          console.log(`[server] Runtime started successfully: mode=${mode}`);
+        } catch (err) {
+          console.error(`[server] Runtime start failed: ${err}`);
+          // Runtime still runs — orchestrator exists but testnetReady=false
+        }
       }
 
       const handler = await getServerEntry();

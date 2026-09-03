@@ -25,7 +25,16 @@ function Strategies() {
   const active = strategies.filter((s: any) => s.state === "ACTIVE");
   const totalAlloc = active.reduce((a: number, s: any) => a + s.allocationPercent, 0);
 
-  // P7D-4.4: Show page header immediately, data loads inline
+  if (isLoading) {
+    return (
+      <div className="mx-auto max-w-[110rem]">
+        <PageHeader eyebrow="Allocation · Strategy Matrix" title="Strategies" desc="Loading..." />
+        <div className="flex items-center justify-center py-20">
+          <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-[110rem]">
@@ -34,13 +43,6 @@ function Strategies() {
         title="Strategies"
         desc="Strategy portfolio: performance, allocation, and evolution state."
       />
-
-      {isLoading && strategies.length === 0 && (
-        <div className="flex items-center gap-3 rounded-sm border border-primary/20 bg-primary/5 px-4 py-3 mb-3">
-          <div className="pulse-dot h-3 w-3 rounded-full bg-primary" />
-          <span className="font-mono text-xs text-muted-foreground">Loading strategies...</span>
-        </div>
-      )}
 
       <div className="grid gap-3 lg:grid-cols-4">
         <Stat label="Active Strategies" value={String(active.length)} sub={`of ${strategies.length} total`} icon={<Layers className="h-4 w-4" />} />
