@@ -9,8 +9,29 @@ type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
 };
 
-// Activate trading runtime on server boot (singleton — safe to call once)
-let runtimeStarted = false;
+// ─── Background Runtime Initialization ──────────────────────────────
+// P7D-4.5: Initialization runs in background so HTTP requests are served immediately.
+// The boot screen polls getSystemReadiness to track real subsystem state.
+
+let _runtimeInitPromise: Promise<void> | null = null;
+let _runtimeReady = false;
+let _dbReady = false;
+let _runtimeError: string | null = null;
+
+/** Check if runtime initialization is complete */
+export function isRuntimeInitialized(): boolean {
+  return _runtimeReady;
+}
+
+/** Check if database initialization is complete */
+export function isDatabaseReady(): boolean {
+  return _dbReady;
+}
+
+/** Get runtime initialization error if any */
+export function getRuntimeInitError(): string | null {
+  return _runtimeError;
+}
 
 /**
  * Detect execution mode from environment.
@@ -72,27 +93,55 @@ function isH3SwallowedErrorBody(body: string): boolean {
   }
 }
 
+/**
+ * P7D-4.5: Background initialization — runs once, non-blocking.
+ * HTTP requests are served immediately while init runs in background.
+ * The boot screen polls getSystemReadiness() to track real state.
+ */
+function initializeRuntimeInBackground(): Promise<void> {
+  if (_runtimeInitPromise) return _runtimeInitPromise;
+
+  _runtimeInitPromise = (async () => {
+    const mode = detectExecutionMode();
+    const tradingEnabled = detectTradingEnabled();
+    console.log(`[server] Background init starting: mode=${mode}, tradingEnabled=${tradingEnabled}`);
+
+    try {
+      // Step 1: Database initialization
+      await initializeDatabase();
+      _dbReady = true;
+      console.log(`[server] Database initialized`);
+    } catch (err) {
+      _runtimeError = `Database init failed: ${err}`;
+      console.error(`[server] Database init failed: ${err}`);
+      // Database failure is fatal — don't continue to runtime
+      return;
+    }
+
+    try {
+      // Step 2: Trading runtime initialization
+      await startTradingRuntime(mode, tradingEnabled);
+      _runtimeReady = true;
+      console.log(`[server] Runtime started successfully: mode=${mode}`);
+    } catch (err) {
+      _runtimeError = `Runtime start failed: ${err}`;
+      console.error(`[server] Runtime start failed: ${err}`);
+      // Runtime error — orchestrator exists but may be degraded
+      // Set ready=true so the app can still function in degraded state
+      _runtimeReady = true;
+    }
+  })();
+
+  return _runtimeInitPromise;
+}
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
-      // Start trading runtime on first request (singleton, idempotent)
-      if (!runtimeStarted) {
-        runtimeStarted = true;
-        const mode = detectExecutionMode();
-        const tradingEnabled = detectTradingEnabled();
-        console.log(`[server] Starting runtime: mode=${mode}, tradingEnabled=${tradingEnabled}`);
-        try {
-          // P7D-3-FIX-CONNECTION-DIAGNOSTIC-2: Initialize database BEFORE runtime
-          // This ensures PostgreSQL migrations (accounts, positions, orders, etc.)
-          // are created before any code tries to query them.
-          await initializeDatabase();
-          console.log(`[server] Database initialized`);
-          await startTradingRuntime(mode, tradingEnabled);
-          console.log(`[server] Runtime started successfully: mode=${mode}`);
-        } catch (err) {
-          console.error(`[server] Runtime start failed: ${err}`);
-          // Runtime still runs — orchestrator exists but testnetReady=false
-        }
+      // P7D-4.5: Fire-and-forget background initialization on first request.
+      // HTTP requests are NOT blocked — the boot screen polls readiness.
+      if (!_runtimeInitPromise) {
+        initializeRuntimeInBackground();
       }
 
       const handler = await getServerEntry();

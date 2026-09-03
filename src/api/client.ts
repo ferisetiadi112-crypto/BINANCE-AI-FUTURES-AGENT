@@ -36,6 +36,7 @@ import {
   getOrchestratorData,
   getDiagnostic,
   getAiLogbook,
+  getSystemReadiness,
 } from "../backend/api";
 import type { ApiResponse } from "../types/api";
 
@@ -223,5 +224,12 @@ export async function fetchAiLogbook(includeNoise = false) {
 
 export async function fetchDiagnostic() {
   const result = await getDiagnostic();
+  return result as ApiResponse<any>;
+}
+
+// ─── System Readiness (P7D-4.5 Boot Screen) ─────────────────────
+
+export async function fetchSystemReadiness() {
+  const result = await getSystemReadiness();
   return result as ApiResponse<any>;
 }

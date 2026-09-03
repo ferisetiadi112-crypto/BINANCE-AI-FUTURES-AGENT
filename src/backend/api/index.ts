@@ -31,7 +31,7 @@ import {
   generateRealtimeMarketState,
   getDataSource,
 } from "../services/data-adapter";
-import { getRuntimeSnapshot } from "../trading/runtime";
+import { getRuntimeSnapshot, isRuntimeRunning, getRuntimeStats } from "../trading/runtime";
 import { getProviderRegistry } from "../ai/llm/providers";
 import { walletRepository } from "../repositories/wallet";
 import { getTestnetExecutor } from "../exchange/testnet-executor";
@@ -39,9 +39,13 @@ import { isTestnetConfigured } from "../exchange/binance-testnet";
 import { getJournalEvents, getRecentJournalEvents, getRecentJournalEventsAsync, type JournalEventType, type JournalImportance } from "../journal";
 import { getReviews } from "../journal/post-trade-review";
 import { getOrchestrator } from "../trading/runtime";
+import { isPostgresConfigured } from "../database";
 import type { ApiResponse, LLMStatusResponse } from "../../types/api";
 import { bossGuardMiddleware } from "../auth/middleware";
 import { createSessionToken, createSessionCookie, createClearSessionCookie } from "../auth";
+
+// P7D-4.5: Import runtime state checks from server.ts for boot screen
+import { isRuntimeInitialized, isDatabaseReady, getRuntimeInitError } from "../../server";
 
 async function wrap<T>(data: T): Promise<ApiResponse<T>> {
   return {
@@ -596,4 +600,68 @@ export const syncTestnetBalance = createServerFn({ method: "POST" })
       newBalance,
     );
     return wrap({ balance: newBalance });
+  },);
+
+// ─── GET /api/system-readiness — P7D-4.5 Boot Screen ───────────────
+// Returns real subsystem state for the boot screen.
+// Non-blocking: checks module-level singletons, no heavy I/O.
+
+export type SystemReadiness = {
+  binanceConfigured: boolean;
+  binanceConnected: boolean;
+  databaseConfigured: boolean;
+  databaseReady: boolean;
+  runtimeReady: boolean;
+  runtimeRunning: boolean;
+  riskEngineReady: boolean;
+  aiRuntimeOnline: boolean;
+  systemReady: boolean;
+  error: string | null;
+  executionMode: string;
+  tradingEnabled: boolean;
+};
+
+export const getSystemReadiness = createServerFn({ method: "GET" }).handler(
+  async () => {
+    const binanceConfigured = isTestnetConfigured();
+    const databaseConfigured = isPostgresConfigured();
+    const runtimeRunning = isRuntimeRunning();
+    const runtimeReady = isRuntimeInitialized();
+    const dbReady = isDatabaseReady();
+
+    // Check orchestrator and risk engine state
+    const orchestrator = getOrchestrator();
+    const riskEngineReady = orchestrator?.getRiskEngine() !== undefined;
+    const aiRuntimeOnline = runtimeRunning;
+
+    // Check Binance actual connection via orchestrator state
+    let binanceConnected = false;
+    if (orchestrator) {
+      const conn = orchestrator.getConnectionState();
+      binanceConnected = conn?.testnetReady ?? false;
+    }
+
+    const mode = process.env["BINANCE_TESTNET_API_KEY"] && process.env["BINANCE_TESTNET_SECRET"]
+      ? "TESTNET" : "PAPER";
+    const tradingEnabled = process.env["TRADING_ENABLED"] === "true";
+
+    const error = getRuntimeInitError();
+
+    // System is ready when database + runtime are both ready
+    const systemReady = dbReady && runtimeReady;
+
+    return wrap({
+      binanceConfigured,
+      binanceConnected,
+      databaseConfigured,
+      databaseReady: dbReady,
+      runtimeReady,
+      runtimeRunning,
+      riskEngineReady,
+      aiRuntimeOnline,
+      systemReady,
+      error,
+      executionMode: mode,
+      tradingEnabled,
+    } satisfies SystemReadiness);
   },);

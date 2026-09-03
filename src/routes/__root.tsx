@@ -7,7 +7,10 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { SystemBoot } from "@/components/SystemBoot";
+
+const BOOT_STORAGE_KEY = "orbital_system_booted";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -128,6 +131,30 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+
+  // P7D-4.5: Boot screen state
+  // On first entry (no sessionStorage flag) → show boot screen
+  // On refresh (flag exists) → skip boot, show app directly
+  const [booted, setBooted] = useState(() => {
+    try {
+      return sessionStorage.getItem(BOOT_STORAGE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const handleBootReady = useCallback(() => {
+    try {
+      sessionStorage.setItem(BOOT_STORAGE_KEY, "true");
+    } catch {
+      // sessionStorage unavailable
+    }
+    setBooted(true);
+  }, []);
+
+  if (!booted) {
+    return <SystemBoot onReady={handleBootReady} />;
+  }
 
   return (
     <QueryClientProvider client={queryClient}>
