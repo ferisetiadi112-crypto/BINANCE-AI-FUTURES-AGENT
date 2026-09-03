@@ -262,7 +262,11 @@ function Dashboard() {
                 <MiniStat label="Available Balance" value={money(account.availableBalance)} />
                 <MiniStat label="Margin Balance" value={money(account.marginBalance)} />
                 <MiniStat label="Unrealized PnL" value={money(account.unrealizedPnl)} tone={account.unrealizedPnl >= 0 ? "gain" : "loss"} />
-                <MiniStat label="Realized PnL" value={money(riskState?.sessionPnl || 0)} tone={(riskState?.sessionPnl || 0) >= 0 ? "gain" : "loss"} />
+                {account?.realizedPnl != null ? (
+                  <MiniStat label="Realized PnL" value={money(account.realizedPnl)} tone={account.realizedPnl >= 0 ? "gain" : "loss"} />
+                ) : (
+                  <MiniStat label="Realized PnL" value="—" />
+                )}
               </div>
             </div>
           ) : (

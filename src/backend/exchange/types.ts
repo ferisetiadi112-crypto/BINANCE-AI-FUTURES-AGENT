@@ -17,6 +17,26 @@
 
 export type ExchangeId = "binance-futures";
 
+// ─── P7D-3-FIX-REALIZED-PNL-2 ────────────────────────────────────────
+/**
+ * Structured result for realized PnL fetch.
+ *
+ * CRITICAL distinction:
+ * - status=SUCCESS + value=0   → Binance responded, no PnL records (real zero)
+ * - status=ERROR + value=null  → Binance request failed (NOT zero)
+ * - status=UNAVAILABLE + value=null → Not connected yet
+ *
+ * REAL ZERO ≠ ERROR ≠ UNAVAILABLE
+ */
+export type RealizedPnlResult = {
+  status: "SUCCESS" | "ERROR" | "UNAVAILABLE";
+  value: number | null;
+  source: "binance" | "unavailable";
+  recordCount: number;
+  lastUpdated?: string;
+  error?: string;
+};
+
 export type OrderSide = "BUY" | "SELL";
 
 export type ExchangeOrderType = "MARKET" | "LIMIT" | "STOP_MARKET" | "TAKE_PROFIT_MARKET";

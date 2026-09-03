@@ -660,6 +660,42 @@ export class TestnetExecutor {
   }
 
   /**
+   * P7D-3-FIX-REALIZED-PNL-2: Get realized PnL from Binance Futures Testnet.
+   * Returns RealizedPnlResult with distinct statuses:
+   *   - SUCCESS + value=0  → Binance responded, no PnL records (real zero)
+   *   - ERROR + value=null → Binance request failed (NOT zero)
+   *   - UNAVAILABLE + value=null → Client not connected
+   *
+   * CRITICAL: NEVER returns 0 for errors.
+   * REAL ZERO ≠ ERROR ≠ UNAVAILABLE
+   */
+  async getRealizedPnl(): Promise<import("./types").RealizedPnlResult> {
+    if (!this.client) {
+      return {
+        status: "UNAVAILABLE",
+        value: null,
+        source: "unavailable",
+        recordCount: 0,
+        error: "Testnet client not configured",
+      };
+    }
+
+    try {
+      return await this.client.getRealizedPnl();
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      logger.warn("testnet-executor", `Failed to get realized PnL from Binance: ${errMsg}`);
+      return {
+        status: "ERROR",
+        value: null,
+        source: "unavailable",
+        recordCount: 0,
+        error: errMsg,
+      };
+    }
+  }
+
+  /**
    * Get a single position from Binance for a specific symbol.
    * Returns null if no position on Binance.
    */

@@ -136,6 +136,164 @@ describe("Binance Testnet Client", () => {
   });
 });
 
+// ─── P7D-3-FIX-REALIZED-PNL: BinanceTestnetClient.getRealizedPnl tests ──
+
+describe("BinanceTestnetClient.getRealizedPnl", () => {
+  it("fetches and sums REALIZED_PNL income records from Binance", async () => {
+    const client = new BinanceTestnetClient({
+      apiKey: "test-key",
+      apiSecret: "test-secret",
+    });
+
+    // Mock the request method to return income records
+    const mockIncome = [
+      { symbol: "BTCUSDT", incomeType: "REALIZED_PNL", income: "0.50", asset: "USDT", time: Date.now(), tradeId: 1, info: "" },
+      { symbol: "ETHUSDT", incomeType: "REALIZED_PNL", income: "-0.25", asset: "USDT", time: Date.now(), tradeId: 2, info: "" },
+      { symbol: "BTCUSDT", incomeType: "FUNDING_FEE", income: "-0.01", asset: "USDT", time: Date.now(), tradeId: 3, info: "" },
+    ];
+    vi.spyOn(client, "request").mockResolvedValue(mockIncome);
+
+    const result = await client.getRealizedPnl();
+
+    expect(result.status).toBe("SUCCESS");
+    expect(result.value).toBeCloseTo(0.25, 4); // 0.50 + (-0.25) = 0.25
+    expect(result.source).toBe("binance");
+    expect(result.recordCount).toBe(2); // Only REALIZED_PNL records
+  });
+
+  it("respects time range parameters", async () => {
+    const client = new BinanceTestnetClient({
+      apiKey: "test-key",
+      apiSecret: "test-secret",
+    });
+
+    const mockIncome = [
+      { symbol: "BTCUSDT", incomeType: "REALIZED_PNL", income: "1.00", asset: "USDT", time: Date.now(), tradeId: 1, info: "" },
+    ];
+    const requestSpy = vi.spyOn(client, "request").mockResolvedValue(mockIncome);
+
+    const startTime = Date.now() - 86400000; // 24h ago
+    const endTime = Date.now();
+    await client.getRealizedPnl(startTime, endTime);
+
+    expect(requestSpy).toHaveBeenCalledWith("GET", "/fapi/v1/income",
+      expect.objectContaining({
+        incomeType: "REALIZED_PNL",
+        startTime: String(startTime),
+        endTime: String(endTime),
+      }),
+    );
+  });
+
+  it("returns empty result when Binance returns no income records", async () => {
+    const client = new BinanceTestnetClient({
+      apiKey: "test-key",
+      apiSecret: "test-secret",
+    });
+    vi.spyOn(client, "request").mockResolvedValue([]);
+
+    const result = await client.getRealizedPnl();
+
+    expect(result.status).toBe("SUCCESS");
+    expect(result.value).toBe(0); // REAL ZERO — Binance responded, no records
+    expect(result.source).toBe("binance");
+    expect(result.recordCount).toBe(0);
+  });
+
+  it("returns ERROR status on API failure (value=null, NEVER 0)", async () => {
+    const client = new BinanceTestnetClient({
+      apiKey: "test-key",
+      apiSecret: "test-secret",
+    });
+    vi.spyOn(client, "request").mockRejectedValue(new BinanceTestnetError("TIMEOUT", "Request timeout", 0));
+
+    const result = await client.getRealizedPnl();
+
+    expect(result.status).toBe("ERROR");
+    expect(result.value).toBeNull(); // NEVER 0 for errors
+    expect(result.source).toBe("unavailable");
+    expect(result.recordCount).toBe(0);
+  });
+
+  it("handles non-finite income values by skipping them", async () => {
+    const client = new BinanceTestnetClient({
+      apiKey: "test-key",
+      apiSecret: "test-secret",
+    });
+
+    const mockIncome = [
+      { symbol: "BTCUSDT", incomeType: "REALIZED_PNL", income: "NaN", asset: "USDT", time: Date.now(), tradeId: 1, info: "" },
+      { symbol: "BTCUSDT", incomeType: "REALIZED_PNL", income: "0.50", asset: "USDT", time: Date.now(), tradeId: 2, info: "" },
+    ];
+    vi.spyOn(client, "request").mockResolvedValue(mockIncome);
+
+    const result = await client.getRealizedPnl();
+
+    expect(result.status).toBe("SUCCESS");
+    expect(result.value).toBeCloseTo(0.50, 4);
+    expect(result.recordCount).toBe(1);
+  });
+
+  // P7D-3-FIX-REALIZED-PNL-2: Additional scenario tests
+
+  it("TEST 3: sums multiple REALIZED_PNL records correctly (+2.50, -0.75, +1.25 = +3.00)", async () => {
+    const client = new BinanceTestnetClient({
+      apiKey: "test-key",
+      apiSecret: "test-secret",
+    });
+
+    const mockIncome = [
+      { symbol: "BTCUSDT", incomeType: "REALIZED_PNL", income: "2.50", asset: "USDT", time: Date.now(), tradeId: 1, info: "" },
+      { symbol: "ETHUSDT", incomeType: "REALIZED_PNL", income: "-0.75", asset: "USDT", time: Date.now(), tradeId: 2, info: "" },
+      { symbol: "BTCUSDT", incomeType: "REALIZED_PNL", income: "1.25", asset: "USDT", time: Date.now(), tradeId: 3, info: "" },
+      { symbol: "BTCUSDT", incomeType: "FUNDING_FEE", income: "-0.01", asset: "USDT", time: Date.now(), tradeId: 4, info: "" },
+    ];
+    vi.spyOn(client, "request").mockResolvedValue(mockIncome);
+
+    const result = await client.getRealizedPnl();
+
+    expect(result.status).toBe("SUCCESS");
+    expect(result.value).toBeCloseTo(3.0, 4); // 2.50 + (-0.75) + 1.25 = 3.00
+    expect(result.source).toBe("binance");
+    expect(result.recordCount).toBe(3); // Only REALIZED_PNL records
+  });
+
+  it("TEST 6: returns ERROR with value=null on authentication error", async () => {
+    const client = new BinanceTestnetClient({
+      apiKey: "test-key",
+      apiSecret: "test-secret",
+    });
+    vi.spyOn(client, "request").mockRejectedValue(
+      new BinanceTestnetError("INVALID_SIGNATURE", "Invalid signature", 401),
+    );
+
+    const result = await client.getRealizedPnl();
+
+    expect(result.status).toBe("ERROR");
+    expect(result.value).toBeNull(); // NEVER 0
+    expect(result.source).toBe("unavailable");
+    expect(result.error).toBeDefined();
+  });
+
+  it("does not expose API key or secret in result", async () => {
+    const client = new BinanceTestnetClient({
+      apiKey: "super-secret-key",
+      apiSecret: "super-secret-value",
+    });
+    vi.spyOn(client, "request").mockResolvedValue([
+      { symbol: "BTCUSDT", incomeType: "REALIZED_PNL", income: "1.00", asset: "USDT", time: Date.now(), tradeId: 1, info: "" },
+    ]);
+
+    const result = await client.getRealizedPnl();
+    const resultStr = JSON.stringify(result);
+
+    expect(resultStr).not.toContain("super-secret-key");
+    expect(resultStr).not.toContain("super-secret-value");
+    expect(resultStr).not.toContain("apiKey");
+    expect(resultStr).not.toContain("apiSecret");
+  });
+});
+
 // ─── Testnet Client Error Handling ──────────────────────────────────
 
 describe("BinanceTestnetError", () => {

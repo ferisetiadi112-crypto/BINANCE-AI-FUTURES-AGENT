@@ -140,6 +140,11 @@ export class TradingOrchestrator {
       tradingEnabled, // P7D-2B: master kill-switch, default OFF
     });
 
+    logger.info(
+      "orchestrator",
+      `RiskEngine created: tradingEnabled=${tradingEnabled}, executionMode=${executionMode}`,
+    );
+
     this.paperEngine = new PaperTradingEngine({
       initialCapital: 10.0,
       simulatedFeeRate: 0.0004,
@@ -1634,6 +1639,9 @@ export class TradingOrchestrator {
       availableBalance: number;
       unrealizedPnl: number;
       marginBalance: number;
+      /** P7D-3-FIX-REALIZED-PNL-2: Realized PnL from Binance Futures Testnet (GET /fapi/v1/income) */
+      realizedPnl: number | null;
+      realizedPnlStatus: "SUCCESS" | "ERROR" | "UNAVAILABLE";
     } | null;
     aiAllocation: {
       limit: number;
@@ -1675,7 +1683,9 @@ export class TradingOrchestrator {
     // Testnet is the only source of truth for account state.
     let effectiveAllocation = 0;
     let accountAvailable = false;
-    let binanceAccount: { balance: number; availableBalance: number; unrealizedPnl: number; marginBalance: number } | null = null;
+    let binanceAccount: { balance: number; availableBalance: number; unrealizedPnl: number; marginBalance: number; realizedPnl: number | null; realizedPnlStatus: "SUCCESS" | "ERROR" | "UNAVAILABLE" } | null = null;
+    let realizedPnl: number | null = null;
+    let realizedPnlStatus: "SUCCESS" | "ERROR" | "UNAVAILABLE" = "UNAVAILABLE";
     let openPositions: Array<{ symbol: string; side: string; size: number; entryPrice: number; markPrice: number; unrealizedPnl: number; leverage: number; margin: number; marginType: "isolated" | "cross" | "unknown" }> = [];
 
     if (this.executionMode === "TESTNET" && this.testnetExecutor && this.state.testnetReady) {
@@ -1686,10 +1696,23 @@ export class TradingOrchestrator {
           availableBalance: snapshot.availableBalance,
           unrealizedPnl: snapshot.unrealizedPnl,
           marginBalance: snapshot.marginBalance,
+          realizedPnl: null,
+          realizedPnlStatus: "UNAVAILABLE" as const,
         };
         openPositions = snapshot.positions;
         effectiveAllocation = computeEffectiveAllocation(snapshot.availableBalance);
         accountAvailable = true;
+
+        // P7D-3-FIX-REALIZED-PNL-2: Fetch realized PnL from Binance Futures Testnet
+        // Source of truth: Binance /fapi/v1/income with incomeType=REALIZED_PNL
+        // CRITICAL: Distinguishes real zero (SUCCESS+value=0) from error (ERROR+value=null)
+        const pnlResult = await this.testnetExecutor.getRealizedPnl();
+        realizedPnl = pnlResult.value;
+        realizedPnlStatus = pnlResult.status;
+        if (binanceAccount) {
+          binanceAccount.realizedPnl = pnlResult.value;
+          binanceAccount.realizedPnlStatus = pnlResult.status;
+        }
       } catch (err) {
         logger.error("orchestrator", `Failed to get Binance account data: ${err}`);
         // P7C: Track sync failure
@@ -1722,7 +1745,7 @@ export class TradingOrchestrator {
     };
 
     return {
-      binanceAccount,
+      binanceAccount: binanceAccount ? { ...binanceAccount } : null,
       aiAllocation,
       openPositions,
       riskState: {

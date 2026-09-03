@@ -227,11 +227,42 @@ function CommandCenter() {
           icon={<TrendingUp className="h-4 w-4" />}
         />
         <Stat
-          label="Execution Mode"
-          value={testnet?.paperTrading ? "PAPER" : "TESTNET"}
-          sub={testnet?.configured ? "Guardrails enforced" : "No API keys"}
-          tone="default"
-          icon={<Lock className="h-4 w-4" />}
+          label="Realized PnL"
+          value={(() => {
+            // P7D-3-FIX-REALIZED-PNL-2: Three distinct states
+            // SUCCESS + value=0  → "0.00 USDT" (real zero from Binance)
+            // SUCCESS + value>0  → "+X.XX USDT" (profit)
+            // SUCCESS + value<0  → "-X.XX USDT" (loss)
+            // ERROR              → "Data unavailable" (Binance request failed)
+            // UNAVAILABLE        → "Waiting for Binance data" (not connected)
+            if (testnet?.realizedPnlStatus === "SUCCESS") {
+              return money(testnet.realizedPnl ?? 0);
+            }
+            if (testnet?.realizedPnlStatus === "ERROR") {
+              return "Data unavailable";
+            }
+            return "Waiting for Binance data";
+          })()}
+          sub={(() => {
+            // P7D-3-FIX-REALIZED-PNL-2: Source label for each state
+            if (testnet?.realizedPnlStatus === "SUCCESS") {
+              return "Source: Binance Futures Testnet";
+            }
+            if (testnet?.realizedPnlStatus === "ERROR") {
+              return "Binance request failed";
+            }
+            return "Waiting for Binance data";
+          })()}
+          tone={(() => {
+            // P7D-3-FIX-REALIZED-PNL-2: Tone only valid when status=SUCCESS
+            if (testnet?.realizedPnlStatus === "SUCCESS") {
+              if ((testnet.realizedPnl ?? 0) > 0) return "gain";
+              if ((testnet.realizedPnl ?? 0) < 0) return "loss";
+              return "default";
+            }
+            return "default";
+          })()}
+          icon={<TrendingUp className="h-4 w-4" />}
         />
       </div>
 

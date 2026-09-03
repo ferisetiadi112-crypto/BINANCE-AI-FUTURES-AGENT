@@ -278,8 +278,7 @@ export const topUpWallet = createServerFn({ method: "POST" })
       newBalance,
     );
     return wrap({ balance: newBalance });
-  },
-);
+  },);
 
 // ─── POST /api/wallet-withdraw ──────────────────────────────────────
 // Protected: boss role required. Identity derived server-side.
@@ -310,8 +309,7 @@ export const withdrawFromWallet = createServerFn({ method: "POST" })
       newBalance,
     );
     return wrap({ balance: newBalance });
-  },
-);
+  },);
 
 // ─── GET /api/audit-trail ───────────────────────────────────────────
 
@@ -323,6 +321,7 @@ export const getAuditTrail = createServerFn({ method: "GET" }).handler(
 );
 
 // ─── GET /api/testnet-status ───────────────────────────────────────
+// P7D-3: Now includes open orders from Binance Futures Testnet
 
 export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
   async () => {
@@ -338,11 +337,34 @@ export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
       markPrice: number;
       unrealizedPnl: number;
       leverage: number;
+      margin: number;
+      marginType: string;
     }> = [];
+    let openOrders: Array<{
+      orderId: number;
+      symbol: string;
+      side: string;
+      type: string;
+      quantity: string;
+      price: string;
+      status: string;
+    }> = [];
+    // P7D-3-FIX-REALIZED-PNL-2: Realized PnL from Binance Futures Testnet (source of truth)
+    // CRITICAL: Distinguishes real zero (SUCCESS+value=0) from error (ERROR+value=null)
+    let realizedPnl: number | null = null;
+    let realizedPnlStatus: "SUCCESS" | "ERROR" | "UNAVAILABLE" = "UNAVAILABLE";
 
     if (configured) {
       const client = executor.getClient();
       if (client) {
+        // If not connected yet, attempt to connect
+        if (!client.isConnected()) {
+          try {
+            await client.connect();
+          } catch {
+            // Connection attempt failed — will be reported below
+          }
+        }
         connected = client.isConnected();
         if (connected) {
           try {
@@ -350,8 +372,28 @@ export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
             balance = snapshot.balance;
             positions = snapshot.positions;
           } catch {
-            // Account query failed — still report connection status
+            // Account query failed
           }
+          // Fetch open orders from Binance Testnet (READ-ONLY)
+          try {
+            const orders = await client.getOpenOrders();
+            openOrders = orders.map((o) => ({
+              orderId: o.orderId,
+              symbol: o.symbol,
+              side: o.side,
+              type: o.type,
+              quantity: o.origQty,
+              price: o.price,
+              status: o.status,
+            }));
+          } catch {
+            // Open orders query failed — not critical
+          }
+          // P7D-3-FIX-REALIZED-PNL-2: Fetch realized PnL from Binance /fapi/v1/income
+          // Returns structured result: SUCCESS (value=number|null), ERROR, UNAVAILABLE
+          const pnlResult = await executor.getRealizedPnl();
+          realizedPnl = pnlResult.value;
+          realizedPnlStatus = pnlResult.status;
         }
       }
     }
@@ -360,12 +402,20 @@ export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
     const orchestrator = getOrchestrator();
     const connectionState = orchestrator?.getConnectionState() ?? null;
 
+    // Use orchestrator's testnetReady as the authoritative connected flag
+    // when orchestrator has been initialized (overrides client-level check)
+    const effectiveConnected = connectionState?.testnetReady ?? connected;
+
     return wrap({
       configured,
-      connected,
+      connected: effectiveConnected,
       balance,
       positions,
+      openOrders,
       paperTrading: process.env["PAPER_TRADING"] !== "false",
+      // P7D-3-FIX-REALIZED-PNL-2: Realized PnL sourced from Binance Futures Testnet
+      realizedPnl,
+      realizedPnlStatus,
       // P7C fields
       testnetReady: connectionState?.testnetReady ?? false,
       lastSuccessfulSync: connectionState?.lastSuccessfulSync ?? null,
@@ -397,6 +447,7 @@ export const getAiReviews = createServerFn({ method: "GET" }).handler(
 );
 
 // ─── GET /api/orchestrator — Full Orchestrator State ─────────────
+// P7D-3: Now includes open orders from Binance Futures Testnet
 
 export const getOrchestratorData = createServerFn({ method: "GET" }).handler(
   async () => {
@@ -408,6 +459,7 @@ export const getOrchestratorData = createServerFn({ method: "GET" }).handler(
         recentActivity: [],
         executionMode: "PAPER",
         testnetReady: false,
+        tradingEnabled: false,
       });
     }
 
@@ -418,14 +470,66 @@ export const getOrchestratorData = createServerFn({ method: "GET" }).handler(
       // Account data unavailable
     }
 
+    // P7D-3: Fetch open orders from Binance Testnet when connected
+    let openOrders: Array<{
+      orderId: number;
+      symbol: string;
+      side: string;
+      type: string;
+      quantity: string;
+      price: string;
+      stopPrice?: string;
+      status: string;
+      reduceOnly?: boolean;
+    }> = [];
+
+    if (orchestrator.isTestnetReady()) {
+      const executor = getTestnetExecutor();
+      const client = executor.getClient();
+      if (client?.isConnected()) {
+        try {
+          const orders = await client.getOpenOrders();
+          openOrders = orders.map((o) => ({
+            orderId: o.orderId,
+            symbol: o.symbol,
+            side: o.side,
+            type: o.type,
+            quantity: o.origQty,
+            price: o.price,
+            status: o.status,
+            reduceOnly: o.isReduceOnly,
+          }));
+        } catch {
+          // Open orders fetch failed — non-critical
+        }
+      }
+    }
+
+    // P7D-3-FIX-REALIZED-PNL-2: Fetch realized PnL from Binance Futures Testnet
+    // Returns structured result with distinct SUCCESS/ERROR/UNAVAILABLE statuses
+    let realizedPnl: number | null = null;
+    let realizedPnlStatus: "SUCCESS" | "ERROR" | "UNAVAILABLE" = "UNAVAILABLE";
+    if (orchestrator.isTestnetReady()) {
+      const executorForPnl = getTestnetExecutor();
+      const pnlResult = await executorForPnl.getRealizedPnl();
+      realizedPnl = pnlResult.value;
+      realizedPnlStatus = pnlResult.status;
+    }
+
     return wrap({
       running: true,
       account,
       recentActivity: orchestrator.getRecentActivity(),
       executionMode: orchestrator.getExecutionMode(),
       testnetReady: orchestrator.isTestnetReady(),
+      tradingEnabled: orchestrator.getRiskEngine().isTradingEnabled(),
       // P7C: Include truthful connection-state
       connectionState: orchestrator.getConnectionState(),
+      // P7D-3: Open orders from Binance
+      openOrders,
+      // P7D-3-FIX-REALIZED-PNL-2: Realized PnL from Binance Futures Testnet
+      realizedPnl,
+      realizedPnlStatus,
     });
   },
 );
@@ -448,5 +552,4 @@ export const syncTestnetBalance = createServerFn({ method: "POST" })
       newBalance,
     );
     return wrap({ balance: newBalance });
-  },
-);
+  },);

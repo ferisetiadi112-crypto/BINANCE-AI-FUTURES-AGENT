@@ -116,6 +116,12 @@ function createMockClient(overrides?: {
     getOpenOrders: vi.fn().mockResolvedValue(config.getOpenOrdersResult),
     cancelOrder: vi.fn().mockResolvedValue({ orderId: 1, status: "CANCELED" }),
     getMarginType: vi.fn().mockResolvedValue("isolated" as const),
+    getRealizedPnl: vi.fn().mockResolvedValue({
+      status: "SUCCESS",
+      value: 0,
+      source: "binance",
+      recordCount: 0,
+    }),
     request: vi.fn().mockImplementation(async (method: string, endpoint: string, params: any) => {
       if (endpoint.includes("/fapi/v1/order") && params.type === "STOP_MARKET") {
         return { orderId: 99001, status: "NEW" };
@@ -1051,5 +1057,83 @@ describe("TestnetExecutor — P7A Real Account Snapshot", () => {
     (executor as any).client = null;
 
     await expect(executor.getAccountSnapshot()).rejects.toThrow(/not configured/);
+  });
+});
+
+// ─── P7D-3-FIX-REALIZED-PNL: Tests ──────────────────────────────────
+
+describe("TestnetExecutor — Realized PnL from Binance", () => {
+  it("fetches realized PnL from Binance Testnet — SUCCESS with positive value", async () => {
+    const mockClient = createMockClient();
+    mockClient.getRealizedPnl = vi.fn().mockResolvedValue({
+      status: "SUCCESS",
+      value: 1.25,
+      source: "binance",
+      recordCount: 3,
+      lastUpdated: new Date().toISOString(),
+    });
+    const executor = createExecutorWithMock(mockClient);
+
+    const result = await executor.getRealizedPnl();
+
+    expect(result.status).toBe("SUCCESS");
+    expect(result.value).toBeCloseTo(1.25, 2);
+    expect(result.source).toBe("binance");
+    expect(mockClient.getRealizedPnl).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns SUCCESS with value=0 when Binance has no REALIZED_PNL records (real zero)", async () => {
+    const mockClient = createMockClient();
+    mockClient.getRealizedPnl = vi.fn().mockResolvedValue({
+      status: "SUCCESS",
+      value: 0,
+      source: "binance",
+      recordCount: 0,
+    });
+    const executor = createExecutorWithMock(mockClient);
+
+    const result = await executor.getRealizedPnl();
+
+    expect(result.status).toBe("SUCCESS");
+    expect(result.value).toBe(0); // Real zero — NOT an error
+  });
+
+  it("returns SUCCESS with negative value for realized losses", async () => {
+    const mockClient = createMockClient();
+    mockClient.getRealizedPnl = vi.fn().mockResolvedValue({
+      status: "SUCCESS",
+      value: -0.75,
+      source: "binance",
+      recordCount: 2,
+    });
+    const executor = createExecutorWithMock(mockClient);
+
+    const result = await executor.getRealizedPnl();
+
+    expect(result.status).toBe("SUCCESS");
+    expect(result.value).toBeCloseTo(-0.75, 2);
+  });
+
+  it("returns ERROR (value=null, NEVER 0) when Binance fetch fails", async () => {
+    const mockClient = createMockClient();
+    mockClient.getRealizedPnl = vi.fn().mockRejectedValue(new Error("Network error"));
+    const executor = createExecutorWithMock(mockClient);
+
+    const result = await executor.getRealizedPnl();
+
+    expect(result.status).toBe("ERROR");
+    expect(result.value).toBeNull(); // NEVER 0 for errors
+    expect(result.source).toBe("unavailable");
+  });
+
+  it("returns UNAVAILABLE when client is not configured", async () => {
+    const executor = new TestnetExecutor();
+    (executor as any).client = null;
+
+    const result = await executor.getRealizedPnl();
+
+    expect(result.status).toBe("UNAVAILABLE");
+    expect(result.value).toBeNull();
+    expect(result.source).toBe("unavailable");
   });
 });

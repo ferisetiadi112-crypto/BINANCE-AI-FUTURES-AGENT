@@ -29,6 +29,7 @@ describe("P7A — Risk Engine wallet balance check uses effective allocation", (
     engine = new RiskEngine({ tradingEnabled: true,
       aiAllocationLimit: 10.0,
       minWalletBalance: 0.50,
+      tradingEnabled: true,
     });
   });
 

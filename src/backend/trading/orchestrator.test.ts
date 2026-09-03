@@ -411,6 +411,12 @@ describe("Trading Orchestrator", () => {
           marginBalance: 25.42,
           positions: [],
         }),
+        getRealizedPnl: vi.fn().mockResolvedValue({
+          status: "SUCCESS",
+          value: null,
+          source: "unavailable",
+          recordCount: 0,
+        }),
       };
       (orch as any).testnetExecutor = fakeExecutor;
 
@@ -426,6 +432,8 @@ describe("Trading Orchestrator", () => {
         availableBalance: 4,
         unrealizedPnl: 0.42,
         marginBalance: 25.42,
+        realizedPnl: null,
+        realizedPnlStatus: "SUCCESS",
       });
       expect(data.aiAllocation.limit).toBe(10);
       expect(data.aiAllocation.effectiveAllocation).toBe(4);

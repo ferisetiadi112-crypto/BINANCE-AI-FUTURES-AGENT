@@ -84,6 +84,7 @@ describe("P7B — RiskEngine effective allocation enforcement", () => {
       minWalletBalance: 0.50,
       maxDecisionAge: 300_000,
       requireGoodDataQuality: true,
+      tradingEnabled: true,
     });
   });
 
@@ -331,6 +332,7 @@ describe("P7B — execution boundary enforcement", () => {
       minWalletBalance: 0.50,
       maxDecisionAge: 300_000,
       requireGoodDataQuality: true,
+      tradingEnabled: true,
     });
   });
 

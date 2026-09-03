@@ -662,6 +662,80 @@ export class BinanceTestnetClient {
     if (incomeType) params["incomeType"] = incomeType;
     return this.request("GET", "/fapi/v1/income", params);
   }
+
+  /**
+   * P7D-3-FIX-REALIZED-PNL: Fetch total realized PnL from Binance Futures Testnet.
+   * Uses GET /fapi/v1/income with incomeType=REALIZED_PNL.
+   * Sums all REALIZED_PNL income records to produce the total.
+   *
+   * @param startTime - Optional start time filter (ms since epoch)
+   * @param endTime - Optional end time filter (ms since epoch)
+   * @returns RealizedPnlResult with status, value, source, and error info.
+   *          CRITICAL: status is SUCCESS even when value is 0 (real zero).
+   *          status is ERROR only on API failure — NEVER returns value=0 for errors.
+   */
+  async getRealizedPnl(startTime?: number, endTime?: number): Promise<
+    import("./types").RealizedPnlResult
+  > {
+    try {
+      const params: Record<string, string> = {
+        incomeType: "REALIZED_PNL",
+        limit: "1000",
+      };
+      if (startTime) params["startTime"] = String(startTime);
+      if (endTime) params["endTime"] = String(endTime);
+
+      const income = await this.request<Array<{
+        symbol: string;
+        incomeType: string;
+        income: string;
+        asset: string;
+        time: number;
+        tradeId: number;
+        info: string;
+      }>>("GET", "/fapi/v1/income", params);
+
+      let totalPnl = 0;
+      const records: Array<{ symbol: string; income: number; time: number }> = [];
+
+      for (const record of income) {
+        if (record.incomeType === "REALIZED_PNL") {
+          const amount = parseFloat(record.income);
+          if (Number.isFinite(amount)) {
+            totalPnl += amount;
+            records.push({ symbol: record.symbol, income: amount, time: record.time });
+          }
+        }
+      }
+
+      logger.debug(
+        "binance-testnet",
+        `Realized PnL: $${totalPnl.toFixed(4)} from ${records.length} records`,
+      );
+
+      // P7D-3-FIX-REALIZED-PNL-2: Binance responded successfully.
+      // value=0 here is REAL ZERO — not an error.
+      return {
+        status: "SUCCESS",
+        value: totalPnl,
+        source: "binance",
+        recordCount: records.length,
+        lastUpdated: new Date().toISOString(),
+      };
+    } catch (err) {
+      // P7D-3-FIX-REALIZED-PNL-2: Binance request FAILED.
+      // NEVER return 0 here — return null so frontend shows "unavailable".
+      const errMsg = err instanceof Error ? err.message : String(err);
+      logger.warn("binance-testnet", `Failed to fetch realized PnL: ${errMsg}`);
+      return {
+        status: "ERROR",
+        value: null,
+        source: "unavailable",
+        recordCount: 0,
+        error: errMsg,
+      };
+    }
+  }
 }
 
 // ─── Error Type ─────────────────────────────────────────────────────
