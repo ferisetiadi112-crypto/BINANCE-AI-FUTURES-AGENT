@@ -31,6 +31,9 @@ import {
   getAuditTrail,
   getTestnetStatus,
   syncTestnetBalance,
+  getJournal,
+  getAiReviews,
+  getOrchestratorData,
 } from "../backend/api";
 import type { ApiResponse } from "../types/api";
 
@@ -183,5 +186,26 @@ export async function fetchTestnetStatus() {
 
 export async function syncTestnetBalanceAction() {
   const result = await syncTestnetBalance();
+  return result as ApiResponse<any>;
+}
+
+// ─── AI Journal Events (P5) ────────────────────────────────────────
+
+export async function fetchJournal() {
+  const result = await getJournal();
+  return result as ApiResponse<any>;
+}
+
+// ─── Post-Trade Reviews (P5) ────────────────────────────────────────
+
+export async function fetchReviews() {
+  const result = await getAiReviews();
+  return result as ApiResponse<any>;
+}
+
+// ─── Orchestrator State (P5) ──────────────────────────────────────
+
+export async function fetchOrchestratorData() {
+  const result = await getOrchestratorData();
   return result as ApiResponse<any>;
 }

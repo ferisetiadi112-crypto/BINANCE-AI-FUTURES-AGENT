@@ -35,6 +35,9 @@ import { getProviderRegistry } from "../ai/llm/providers";
 import { walletRepository } from "../repositories/wallet";
 import { getTestnetExecutor } from "../exchange/testnet-executor";
 import { isTestnetConfigured } from "../exchange/binance-testnet";
+import { getJournalEvents, getRecentJournalEvents, type JournalEventType, type JournalImportance } from "../journal";
+import { getReviews } from "../journal/post-trade-review";
+import { getOrchestrator } from "../trading/runtime";
 import type { ApiResponse, LLMStatusResponse } from "../../types/api";
 import { bossGuardMiddleware } from "../auth/middleware";
 import { createSessionToken, createSessionCookie, createClearSessionCookie } from "../auth";
@@ -359,6 +362,57 @@ export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
       balance,
       positions,
       paperTrading: process.env["PAPER_TRADING"] !== "false",
+    });
+  },
+);
+
+// ─── GET /api/journal — AI Decision Journal Events ─────────────────
+
+export const getJournal = createServerFn({ method: "GET" }).handler(
+  async () => {
+    const events = getRecentJournalEvents(200);
+    // Serialize through JSON to ensure all nested types are safe for server transport
+    return wrap({ events: JSON.parse(JSON.stringify(events)) } as any);
+  },
+);
+
+// ─── GET /api/reviews — Post-Trade Reviews ────────────────────────
+
+export const getAiReviews = createServerFn({ method: "GET" }).handler(
+  async () => {
+    const reviews = getReviews();
+    return wrap({ reviews: JSON.parse(JSON.stringify(reviews)) } as any);
+  },
+);
+
+// ─── GET /api/orchestrator — Full Orchestrator State ─────────────
+
+export const getOrchestratorData = createServerFn({ method: "GET" }).handler(
+  async () => {
+    const orchestrator = getOrchestrator();
+    if (!orchestrator) {
+      return wrap({
+        running: false,
+        account: null,
+        recentActivity: [],
+        executionMode: "PAPER",
+        testnetReady: false,
+      });
+    }
+
+    let account = null;
+    try {
+      account = await orchestrator.getBinanceAccountData();
+    } catch {
+      // Account data unavailable
+    }
+
+    return wrap({
+      running: true,
+      account,
+      recentActivity: orchestrator.getRecentActivity(),
+      executionMode: orchestrator.getExecutionMode(),
+      testnetReady: orchestrator.isTestnetReady(),
     });
   },
 );

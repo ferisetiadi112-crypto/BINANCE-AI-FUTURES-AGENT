@@ -1,57 +1,126 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useState, useRef, useEffect, useMemo } from "react";
 import {
   Activity,
   ArrowDownRight,
   ArrowUpRight,
-  BarChart3,
   BrainCircuit,
   CircleAlert,
-  CircleCheck,
   Clock,
   Cpu,
-  Crosshair,
   Database,
   Gauge,
-  LineChart,
   Radio,
+  Search,
   Shield,
   Target,
   TrendingUp,
   Wallet,
   Zap,
+  Filter,
+  ArrowRight,
+  Lock,
+  Unlock,
+  XCircle,
+  CheckCircle2,
+  AlertTriangle,
+  Timer,
+  X,
 } from "lucide-react";
-import { Meter, PageHeader, Panel, Stat, Tag } from "@/components/space/Panel";
-import { CandleChart, EquityChart, SignalRadar } from "@/components/space/Charts";
-import { fetchDashboard, fetchRuntime, fetchLearning, fetchSystem, fetchHealth, fetchPaperStatus, fetchFeedStatus } from "@/api/client";
+import { PageHeader, Panel, Stat, Tag } from "@/components/space/Panel";
+import {
+  fetchTestnetStatus,
+  fetchRuntime,
+  fetchSystem,
+  fetchHealth,
+  fetchJournal,
+  fetchReviews,
+  fetchOrchestratorData,
+} from "@/api/client";
+import type { JournalEventType, JournalImportance } from "@/backend/journal";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "Command Deck — Orbital AI Futures Dashboard" },
-      { name: "description", content: "AI Futures Trading Observatory — system status, AI decisions, risk controls, paper performance, and learning metrics." },
+      {
+        name: "description",
+        content:
+          "Real-time AI trading agent monitoring — Binance Testnet account, positions, orders, PnL, risk state, and AI Decision Journal.",
+      },
       { property: "og:title", content: "Command Deck — Orbital AI Futures Dashboard" },
-      { property: "og:description", content: "AI Futures Trading Observatory — full system visibility." },
     ],
   }),
   component: Dashboard,
 });
 
+// ─── Helpers ────────────────────────────────────────────────────────
+
 const money = (n: number) =>
-  `${n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  `${n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+
+const fmtTime = (ts: number) => {
+  const d = new Date(ts);
+  return d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+};
+
+const JOURNAL_CATEGORIES: Record<string, string[]> = {
+  AI: ["SYSTEM_STARTED", "SYSTEM_STOPPED", "PERIODIC_REPORT"],
+  MARKET: ["MARKET_SCAN", "RESEARCH", "ANALYSIS"],
+  RISK: ["RISK_CHECK", "RISK_LOCKED", "COOLDOWN_STARTED", "DAILY_LOSS_LIMIT", "PROFIT_TARGET_REACHED", "HARD_PROFIT_CAP"],
+  TRADE: ["TRADE_PROPOSED", "TRADE_APPROVED", "TRADE_REJECTED", "TRADE_OPENED", "TRADE_CLOSED", "POST_TRADE_REVIEW"],
+  POSITION: ["POSITION_OPENED", "POSITION_CLOSED", "POSITION_MONITOR", "STOP_LOSS", "TAKE_PROFIT", "ORDER_SUBMITTED", "ORDER_CONFIRMED"],
+  SYSTEM: ["STARTUP_RECONCILIATION", "PNL_UPDATED"],
+  ERROR: [],
+};
+
+const EVENT_ICONS: Record<string, typeof Shield> = {
+  SYSTEM_STARTED: Zap,
+  SYSTEM_STOPPED: XCircle,
+  MARKET_SCAN: Target,
+  RISK_CHECK: Shield,
+  RISK_LOCKED: Lock,
+  TRADE_PROPOSED: ArrowRight,
+  TRADE_APPROVED: CheckCircle2,
+  TRADE_REJECTED: XCircle,
+  TRADE_OPENED: TrendingUp,
+  TRADE_CLOSED: TrendingUp,
+  ORDER_SUBMITTED: ArrowRight,
+  ORDER_CONFIRMED: CheckCircle2,
+  POSITION_OPENED: TrendingUp,
+  POSITION_CLOSED: TrendingUp,
+  POSITION_MONITOR: Activity,
+  STOP_LOSS: AlertTriangle,
+  TAKE_PROFIT: Target,
+  COOLDOWN_STARTED: Timer,
+  DAILY_LOSS_LIMIT: Lock,
+  HARD_PROFIT_CAP: Lock,
+  PERIODIC_REPORT: Radio,
+  STARTUP_RECONCILIATION: Database,
+  PNL_UPDATED: Activity,
+  POST_TRADE_REVIEW: BrainCircuit,
+};
+
+const IMPORTANCE_TONE: Record<string, "gain" | "loss" | "warn" | "cyan" | "default"> = {
+  LOW: "default",
+  MEDIUM: "cyan",
+  HIGH: "warn",
+  CRITICAL: "loss",
+};
+
+// ─── Dashboard ──────────────────────────────────────────────────────
 
 function Dashboard() {
-  const { data: dashResp, isLoading: dashLoading } = useQuery({
-    queryKey: ["dashboard"],
-    queryFn: fetchDashboard,
+  const { data: testnetResp } = useQuery({
+    queryKey: ["testnet-status"],
+    queryFn: fetchTestnetStatus,
+    refetchInterval: 10_000,
   });
   const { data: runtimeResp } = useQuery({
     queryKey: ["runtime"],
     queryFn: fetchRuntime,
-  });
-  const { data: learningResp } = useQuery({
-    queryKey: ["learning"],
-    queryFn: fetchLearning,
+    refetchInterval: 15_000,
   });
   const { data: systemResp } = useQuery({
     queryKey: ["system"],
@@ -61,27 +130,44 @@ function Dashboard() {
     queryKey: ["health"],
     queryFn: fetchHealth,
   });
-  const { data: paperResp } = useQuery({
-    queryKey: ["paper-status"],
-    queryFn: fetchPaperStatus,
-    refetchInterval: 10000, // Poll every 10s for live status
+  const { data: journalResp } = useQuery({
+    queryKey: ["journal"],
+    queryFn: fetchJournal,
+    refetchInterval: 5_000,
   });
-  const { data: feedResp } = useQuery({
-    queryKey: ["feed-status"],
-    queryFn: fetchFeedStatus,
-    refetchInterval: 5000, // Poll every 5s for live feed state
+  const { data: reviewsResp } = useQuery({
+    queryKey: ["reviews"],
+    queryFn: fetchReviews,
+    refetchInterval: 30_000,
+  });
+  const { data: orchResp } = useQuery({
+    queryKey: ["orchestrator"],
+    queryFn: fetchOrchestratorData,
+    refetchInterval: 10_000,
   });
 
-  const d = dashResp?.data;
+  const testnet = testnetResp?.data;
   const runtime = runtimeResp?.data;
-  const learning = learningResp?.data;
   const system = systemResp?.data;
   const health = healthResp?.data;
+  const journal = journalResp?.data;
+  const reviews = reviewsResp?.data;
+  const orch = orchResp?.data;
+  const riskState = orch?.account?.riskState;
+  const account = orch?.account?.binanceAccount;
+  const aiAllocation = orch?.account?.aiAllocation;
+  const positions = orch?.account?.openPositions || [];
+  const events: JournalEvent[] = journal?.events || [];
+  const aiReviews = reviews?.reviews || [];
 
-  if (dashLoading || !d) {
+  const isConnected = testnet?.connected;
+  const executionMode = orch?.executionMode || "PAPER";
+
+  // ── Loading state ──
+  if (!orch && !runtime) {
     return (
       <div className="mx-auto max-w-[110rem]">
-        <PageHeader eyebrow="Sector 07 · Command Deck" title="Trading Command Center" desc="Loading..." />
+        <PageHeader eyebrow="Sector 07 · Command Deck" title="Loading..." desc="Connecting to trading system..." />
         <div className="flex items-center justify-center py-20">
           <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
           <span className="ml-3 font-mono text-sm text-muted-foreground">Initializing systems...</span>
@@ -90,32 +176,52 @@ function Dashboard() {
     );
   }
 
-  const aiIntel = runtime?.aiIntelligence;
-  const riskEnv = d.riskEnvelope;
-  const learningStats = learning?.experienceStats;
-  const derivedLessons = learning?.derivedLessons?.slice(0, 3) || [];
-  const systemNodes = system?.nodes || [];
-  const paper = paperResp?.data;
-  const feedStatusData = feedResp?.data;
-  // Phase 8C: Use real feed state from WebSocket FeedManager
-  const feedSymbols = feedStatusData?.symbols || paper?.feedSymbols || [];
+  const systemStatus = riskState?.isLocked
+    ? riskState.hardCapReached
+      ? "LOCKED"
+      : riskState.cooldownActive
+        ? "COOLDOWN"
+        : "LOCKED"
+    : orch?.running
+      ? "AI ACTIVE"
+      : "OFFLINE";
+
+  const runtimeEvents = runtime?.recentEvents || [];
+  const lastEvent = runtimeEvents[runtimeEvents.length - 1];
+  const aiActivity = lastEvent?.executionResult === "TESTNET_EXECUTED"
+    ? "TRADING"
+    : lastEvent?.executionResult === "REJECTED"
+      ? "RISK REJECTED"
+      : lastEvent?.executionResult === "NO_TRADE"
+        ? "MONITORING"
+        : orch?.running
+          ? "ANALYZING"
+          : "IDLE";
 
   return (
     <div className="mx-auto max-w-[110rem]">
       <PageHeader
         eyebrow="Sector 07 · Command Deck"
         title="AI Futures Trading Observatory"
-        desc="PAPER TRADING MODE — All figures are simulated. No real money at risk."
+        desc={
+          executionMode === "TESTNET"
+            ? "BINANCE FUTURES TESTNET — Real account data from Binance Testnet"
+            : "PAPER TRADING MODE — Simulated data"
+        }
         right={
           <div className="panel corner-ticks flex items-center gap-3 px-4 py-2.5">
-            <span className="pulse-dot h-2 w-2 rounded-full bg-primary" />
+            <span className={`pulse-dot h-2 w-2 rounded-full ${isConnected ? "bg-gain" : "bg-loss"}`} />
             <div>
               <div className="label-mono">System Status</div>
-              <div className="font-mono text-sm font-semibold text-gain glow-text">{health?.status || "INITIALIZING"}</div>
+              <div className={`font-mono text-sm font-semibold ${systemStatus === "AI ACTIVE" ? "text-gain glow-text" : systemStatus === "COOLDOWN" ? "text-amber-signal" : systemStatus === "LOCKED" ? "text-loss" : "text-muted-foreground"}`}>
+                {systemStatus}
+              </div>
             </div>
             <div className="ml-3 border-l border-hairline pl-3">
               <div className="label-mono">Mode</div>
-              <div className="font-mono text-sm text-primary">PAPER</div>
+              <div className={`font-mono text-sm ${executionMode === "TESTNET" ? "text-gain" : "text-primary"}`}>
+                {executionMode}
+              </div>
             </div>
           </div>
         }
@@ -124,323 +230,452 @@ function Dashboard() {
       {/* ── System Status Bar ───────────────────────────────────────── */}
       <Panel title="System Status" code="OBSERVATORY" glow>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <StatusIndicator label="Market Feed" state={feedStatusData?.aggregate?.overallFeedState || paper?.feedState || "OFFLINE"} />
-          <StatusIndicator label="Runtime Intel" state="ONLINE" />
-          <StatusIndicator label="AI Engine" state="ONLINE" />
-          <StatusIndicator label="Risk Engine" state={riskEnv.status === "NOMINAL" ? "ONLINE" : "PAUSED"} />
-          <StatusIndicator label="Paper Trading" state="SIMULATION" />
-          <StatusIndicator label="Learning" state="ACTIVE" />
+          <StatusIndicator label="Binance Testnet" state={isConnected ? "CONNECTED" : "OFFLINE"} />
+          <StatusIndicator label="Database" state={health?.status === "healthy" ? "NEON POSTGRESQL" : "OFFLINE"} />
+          <StatusIndicator label="AI Engine" state={orch?.running ? "ACTIVE" : "INACTIVE"} />
+          <StatusIndicator label="Risk Engine" state={riskState?.isLocked ? "LOCKED" : "PROTECTED"} />
+          <StatusIndicator label="Journal" state="ACTIVE" />
+          <StatusIndicator label="Execution" state={executionMode} />
         </div>
-      </Panel>
-
-      {/* ── Primary Stats ───────────────────────────────────────────── */}
-      <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
-        <Stat label="Balance" value={money(d.account.balance)} sub={`Equity ${money(d.account.equity)}`} icon={<Wallet className="h-4 w-4" />} />
-        <Stat label="Daily PnL" value={money(d.dailyPnl)} sub={`${d.dailyPnlPercent >= 0 ? "+" : ""}${d.dailyPnlPercent}% today`} tone={d.dailyPnl >= 0 ? "gain" : "loss"} icon={<ArrowUpRight className="h-4 w-4" />} />
-        <Stat label="Total PnL" value={money(d.totalPnl)} sub={`${d.totalPnlPercent >= 0 ? "+" : ""}${d.totalPnlPercent}% all time`} tone={d.totalPnl >= 0 ? "gain" : "loss"} icon={<Activity className="h-4 w-4" />} />
-        <Stat label="Win Rate" value={`${d.winRate}%`} sub={`${d.tradeCount} trades`} icon={<Target className="h-4 w-4" />} />
-        <Stat label="Profit Factor" value={d.profitFactor.toFixed(2)} sub={`Sharpe ${d.sharpeRatio}`} icon={<LineChart className="h-4 w-4" />} />
-        <Stat label="Max Drawdown" value={`${d.maxDrawdown}%`} sub={`Current ${d.currentDrawdown}%`} tone="loss" icon={<ArrowDownRight className="h-4 w-4" />} />
-      </div>
-
-      {/* ── Market + AI Decision ────────────────────────────────────── */}
-      <div className="mt-3 grid gap-3 xl:grid-cols-3">
-        <Panel
-          title="BTCUSDT · Perpetual"
-          code="15M · PAPER FEED"
-          className="xl:col-span-2"
-          glow
-          action={
-            <div className="flex items-center gap-2">
-              <Tag tone="gain">PAPER</Tag>
-              <span className="font-mono text-sm tabular-nums text-foreground">{d.currentPrice.toLocaleString()}</span>
-            </div>
-          }
-        >
-          <CandleChart data={d.candles} />
-        </Panel>
-
-        <div className="flex flex-col gap-3">
-          <Panel title="AI Decision" code="OBSERVE" glow>
-            <div className="flex items-end justify-between">
-              <div className="font-mono text-5xl font-semibold text-primary glow-text">
-                {d.aiDecision.confidence}
-                <span className="text-xl">%</span>
-              </div>
-              <BrainCircuit className="h-8 w-8 text-primary/60" />
-            </div>
-            <Meter value={d.aiDecision.confidence} className="mt-4" />
-            <dl className="mt-4 space-y-2 border-t border-hairline pt-3">
-              <Row k="Action" v={d.aiDecision.action} tone="gain" />
-              <Row k="Symbol" v={d.aiDecision.symbol} />
-              <Row k="Strategy" v={`${d.aiDecision.strategyName} ${d.aiDecision.strategyVersion}`} />
-              <Row k="Regime" v={aiIntel?.regime || "UNKNOWN"} />
-              <Row k="Risk" v={riskEnv.status} tone={riskEnv.status === "NOMINAL" ? "gain" : "loss"} />
-            </dl>
-          </Panel>
-
-          <Panel title="Signal Matrix" code="6-AXIS">
-            <SignalRadar data={riskEnv.status === "NOMINAL" ? [
-              { label: "Momentum", v: 82 },
-              { label: "Trend", v: 74 },
-              { label: "Volatility", v: 46 },
-              { label: "Liquidity", v: 68 },
-              { label: "Sentiment", v: 59 },
-              { label: "Risk", v: 31 },
-            ] : []} />
-          </Panel>
-        </div>
-      </div>
-
-      {/* ── AI Decision Feed ────────────────────────────────────────── */}
-      <div className="mt-3">
-        <Panel title="AI Decision Feed" code="OBSERVE" action={<Tag tone="cyan">LIVE TRACE</Tag>}>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[50rem] border-collapse">
-              <thead>
-                <tr className="border-b border-hairline">
-                  {["Time", "Symbol", "Direction", "Confidence", "Strategy", "Regime", "Risk", "Result"].map((h) => (
-                    <th key={h} className="label-mono px-3 py-2 text-left font-normal text-[0.65rem]">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {d.recentTrades.slice(0, 5).map((t: any) => (
-                  <tr key={t.id} className="border-b border-hairline/60 transition-colors last:border-0 hover:bg-primary/5">
-                    <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{t.closedAt || "—"}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-foreground">{t.symbol}</td>
-                    <td className="px-3 py-2">
-                      <Tag tone={t.side === "LONG" ? "gain" : "violet"}>{t.side}</Tag>
-                    </td>
-                    <td className="px-3 py-2 font-mono text-xs text-foreground">{d.aiDecision.confidence}%</td>
-                    <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{t.strategyName}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{aiIntel?.regime || "—"}</td>
-                    <td className="px-3 py-2">
-                      <Tag tone="gain">APPROVED</Tag>
-                    </td>
-                    <td className={`px-3 py-2 font-mono text-xs tabular-nums ${t.pnl >= 0 ? "text-gain" : "text-loss"}`}>
-                      {t.pnl >= 0 ? "+" : ""}{t.pnl.toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
-      </div>
-
-      {/* ── Equity + Recent Trades ──────────────────────────────────── */}
-      <div className="mt-3 grid gap-3 xl:grid-cols-3">
-        <Panel title="Equity Curve" code="PAPER" className="xl:col-span-2">
-          <EquityChart data={[
-            { d: "D1", equity: 500, benchmark: 500 },
-            { d: "D10", equity: 520, benchmark: 505 },
-            { d: "D20", equity: 545, benchmark: 510 },
-            { d: "D30", equity: 560, benchmark: 515 },
-            { d: "D40", equity: 580, benchmark: 520 },
-          ]} height={230} />
-        </Panel>
-
-        <Panel title="Paper Trading Observatory" code="SIMULATION" bodyClassName="p-0" action={<Tag tone="gain">LIVE</Tag>}>
-          <div className="p-4 space-y-3">
-            <div className="flex items-center gap-2 rounded-sm border border-primary/30 bg-primary/5 px-3 py-2">
-              <Gauge className="h-4 w-4 text-primary" />
-              <span className="font-mono text-[0.7rem] uppercase tracking-wider text-primary">Paper Trading Mode</span>
-              <Tag tone="gain">{paper?.mode || "PAPER"}</Tag>
-            </div>
-
-            {/* Active Position */}
-            {paper?.activePosition ? (
-              <div className="rounded-sm border border-gain/40 bg-gain/5 p-3">
-                <div className="flex items-center justify-between">
-                  <span className="label-mono text-[0.6rem]">ACTIVE POSITION</span>
-                  <Tag tone={paper.activePosition.side === "LONG" ? "gain" : "violet"}>{paper.activePosition.side}</Tag>
-                </div>
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  <MiniStat label="Symbol" value={paper.activePosition.symbol} />
-                  <MiniStat label="Size" value={`${paper.activePosition.size} × ${paper.activePosition.leverage}x`} />
-                  <MiniStat label="Entry" value={`$${paper.activePosition.entryPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`} />
-                  <MiniStat label="Mark" value={`$${paper.activePosition.markPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`} />
-                  <MiniStat label="Unrealized PnL" value={money(paper.activePosition.unrealizedPnl)} />
-                  <MiniStat label="Duration" value={`${paper.activePosition.durationMinutes}m`} />
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-sm border border-hairline bg-muted/30 px-3 py-2">
-                <span className="label-mono text-[0.6rem]">NO ACTIVE POSITION</span>
-              </div>
-            )}
-
-            {/* Performance Summary */}
-            <div className="border-t border-hairline pt-3 space-y-1.5">
-              <Row k="Virtual Capital" v={money(paper?.capital || d.account.balance)} tone="gain" />
-              <Row k="Total PnL" v={money(paper?.totalPnl || d.totalPnl)} tone={(paper?.totalPnl || d.totalPnl) >= 0 ? "gain" : "loss"} />
-              <Row k="Win Rate" v={`${paper?.winRate || d.winRate}%`} />
-              <Row k="Trades" v={`${paper?.totalTrades || d.tradeCount}`} />
-              <Row k="Profit Factor" v={(paper?.profitFactor || d.profitFactor).toFixed(2)} />
-              <Row k="Max Drawdown" v={`${paper?.maxDrawdown || d.maxDrawdown}%`} tone="loss" />
-            </div>
-
-            {/* Last AI Decision */}
-            {paper?.lastAiDecision && (
-              <div className="border-t border-hairline pt-3">
-                <div className="flex items-center justify-between">
-                  <span className="label-mono text-[0.6rem]">LAST AI DECISION</span>
-                  <Tag tone="cyan">{paper.lastAiDecision.timestamp}</Tag>
-                </div>
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  <MiniStat label="Action" value={paper.lastAiDecision.action} />
-                  <MiniStat label="Confidence" value={`${paper.lastAiDecision.confidence}%`} />
-                  <MiniStat label="Symbol" value={paper.lastAiDecision.symbol} />
-                  <MiniStat label="Strategy" value={paper.lastAiDecision.strategyName} />
-                </div>
-              </div>
-            )}
-
-            {/* Safety */}
-            <div className="flex items-center gap-2 rounded-sm border border-gain/40 bg-gain/5 px-3 py-2">
-              <Shield className="h-4 w-4 text-gain" />
-              <span className="font-mono text-[0.68rem] uppercase tracking-[0.12em] text-gain">Risk Engine: {paper?.riskEngineStatus || "PAPER"} · {paper?.emergencyStopState || "ARMED"}</span>
-            </div>
-          </div>
-        </Panel>
-      </div>
-
-      {/* ── Risk Center + Learning ──────────────────────────────────── */}
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        <Panel title="Risk Center" code="GUARDIAN" action={<Tag tone={riskEnv.status === "NOMINAL" ? "gain" : "loss"}>{riskEnv.status}</Tag>}>
-          <div className="space-y-4">
-            <GaugeBar label="Daily Profit Target" used={riskEnv.dailyProfitUsed} cap={riskEnv.dailyProfitCap} tone="primary" />
-            <GaugeBar label="Daily Loss Limit" used={riskEnv.dailyLossUsed} cap={riskEnv.dailyLossLimit} tone="loss" />
-            <GaugeBar label="Exposure" used={riskEnv.totalExposure} cap={riskEnv.maxExposure} tone="cyan" />
-            <div className="flex items-center gap-2 rounded-sm border border-hairline bg-muted/40 px-3 py-2">
-              <Shield className="h-4 w-4 text-primary" />
-              <span className="font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted-foreground">
-                {riskEnv.emergencyStopState} · Leverage {riskEnv.currentLeverage}x / {riskEnv.maxLeverage}x
+        {riskState?.isLocked && (
+          <div className="mt-3 flex items-center gap-3 rounded-sm border border-loss/40 bg-loss/5 px-4 py-2">
+            <Lock className="h-4 w-4 text-loss" />
+            <div>
+              <span className="font-mono text-xs font-semibold text-loss">
+                {riskState.hardCapReached ? "HARD PROFIT CAP REACHED" : riskState.cooldownActive ? "COOLDOWN ACTIVE" : "TRADING LOCKED"}
+              </span>
+              <span className="ml-2 font-mono text-xs text-muted-foreground">
+                {riskState.lockReason || "Unknown reason"}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="rounded-sm border border-hairline bg-muted/30 px-3 py-2">
-                <div className="label-mono text-[0.6rem]">Open Positions</div>
-                <div className="font-mono text-sm font-semibold">{riskEnv.openPositionCount}</div>
-              </div>
-              <div className="rounded-sm border border-hairline bg-muted/30 px-3 py-2">
-                <div className="label-mono text-[0.6rem]">Margin Ratio</div>
-                <div className="font-mono text-sm font-semibold">{riskEnv.marginRatio}%</div>
-              </div>
-            </div>
           </div>
-        </Panel>
+        )}
+      </Panel>
 
-        <Panel title="AI Learning" code="COGNITION" action={<Tag>v{learning?.lessonStats?.latestCycle || 0}</Tag>}>
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-2">
-              <MiniStat label="Experiences" value={String(learningStats?.totalExperiences || 0)} />
-              <MiniStat label="Trades" value={String(learningStats?.totalTrades || 0)} />
-              <MiniStat label="No-Trade" value={String(learningStats?.totalNoTrades || 0)} />
-              <MiniStat label="Win Rate" value={`${(learningStats?.winRate || 0).toFixed(1)}%`} />
-            </div>
-            <div className="border-t border-hairline pt-3">
-              <div className="label-mono text-[0.6rem] mb-2">Recent Lessons</div>
-              {derivedLessons.length > 0 ? (
-                <div className="space-y-2">
-                  {derivedLessons.map((l: any, i: number) => (
-                    <div key={l.id || i} className="rounded-sm border border-hairline bg-muted/30 px-3 py-2">
-                      <div className="font-mono text-xs text-foreground">{l.text}</div>
-                      <div className="mt-1 font-mono text-[0.6rem] text-muted-foreground">
-                        <Tag tone="cyan">{l.category}</Tag> · confidence {l.confidence}% · {l.evidenceCount} evidence
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="font-mono text-xs text-muted-foreground">No derived lessons yet</div>
-              )}
-            </div>
-          </div>
-        </Panel>
-      </div>
-
-      {/* ── Backtest + System ───────────────────────────────────────── */}
+      {/* ── Account Overview + AI Allocation ────────────────────────── */}
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        <Panel title="Backtest & Walk-Forward" code="VALIDATION" action={<Tag tone="cyan">READ-ONLY</Tag>}>
+        <Panel title="Testnet Account" code="BINANCE FUTURES" glow action={<Tag tone={isConnected ? "gain" : "loss"}>{isConnected ? "CONNECTED" : "OFFLINE"}</Tag>}>
+          {account ? (
+            <div className="space-y-3">
+              <Stat label="Wallet Balance" value={money(account.balance)} icon={<Wallet className="h-4 w-4" />} />
+              <div className="grid grid-cols-2 gap-2">
+                <MiniStat label="Available Balance" value={money(account.availableBalance)} />
+                <MiniStat label="Margin Balance" value={money(account.marginBalance)} />
+                <MiniStat label="Unrealized PnL" value={money(account.unrealizedPnl)} tone={account.unrealizedPnl >= 0 ? "gain" : "loss"} />
+                <MiniStat label="Realized PnL" value={money(riskState?.sessionPnl || 0)} tone={(riskState?.sessionPnl || 0) >= 0 ? "gain" : "loss"} />
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <Database className="mb-3 h-8 w-8 text-muted-foreground/40" />
+              <div className="font-mono text-sm text-muted-foreground">
+                {isConnected ? "Account data loading..." : "BINANCE TESTNET OFFLINE"}
+              </div>
+              <div className="mt-1 font-mono text-[0.65rem] text-muted-foreground/60">
+                {isConnected ? "Waiting for first data fetch" : "Configure Testnet credentials in Settings"}
+              </div>
+            </div>
+          )}
+        </Panel>
+
+        <Panel title="AI Capital Allocation" code="$10 USDT MAX" glow>
+          {aiAllocation ? (
+            <div className="space-y-3">
+              <div className="flex items-end justify-between">
+                <div>
+                  <div className="label-mono">AI Allocation Limit</div>
+                  <div className="mt-1 font-mono text-3xl font-semibold text-primary glow-text">
+                    {money(aiAllocation.limit)}
+                  </div>
+                </div>
+                <BrainCircuit className="h-6 w-6 text-primary/60" />
+              </div>
+              <GaugeBar
+                label="Allocated"
+                used={aiAllocation.allocated}
+                cap={aiAllocation.limit}
+                tone="primary"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <MiniStat label="Allocated" value={money(aiAllocation.allocated)} />
+                <MiniStat label="Remaining" value={money(aiAllocation.available)} tone="gain" />
+              </div>
+              <div className="rounded-sm border border-hairline bg-muted/30 px-3 py-2">
+                <span className="font-mono text-[0.65rem] text-muted-foreground">
+                  This is the AI trading limit, NOT the wallet balance. AI cannot trade more than ${aiAllocation.limit} margin.
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <BrainCircuit className="mb-3 h-8 w-8 text-muted-foreground/40" />
+              <div className="font-mono text-sm text-muted-foreground">Allocation data loading...</div>
+            </div>
+          )}
+        </Panel>
+      </div>
+
+      {/* ── Active Position ─────────────────────────────────────────── */}
+      <div className="mt-3">
+        <Panel
+          title="Active Position"
+          code={positions.length > 0 ? "OPEN" : "NONE"}
+          action={positions.length > 0 ? <Tag tone="gain">OPEN</Tag> : undefined}
+          glow={positions.length > 0}
+        >
+          {positions.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="border-b border-hairline">
+                    {["Symbol", "Side", "Size", "Entry", "Mark", "Margin", "Leverage", "Unrealized PnL"].map((h) => (
+                      <th key={h} className="label-mono px-3 py-2 text-left font-normal text-[0.65rem]">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.map((p: any, i: number) => (
+                    <tr key={`${p.symbol}-${i}`} className="border-b border-hairline/60 hover:bg-primary/5">
+                      <td className="px-3 py-2 font-mono text-xs font-semibold text-foreground">{p.symbol}</td>
+                      <td className="px-3 py-2">
+                        <Tag tone={p.side === "LONG" ? "gain" : "violet"}>{p.side}</Tag>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs text-foreground">{p.size}</td>
+                      <td className="px-3 py-2 font-mono text-xs tabular-nums text-foreground">{money(p.entryPrice)}</td>
+                      <td className="px-3 py-2 font-mono text-xs tabular-nums text-foreground">{money(p.markPrice)}</td>
+                      <td className="px-3 py-2 font-mono text-xs tabular-nums text-foreground">{money(p.margin)}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-foreground">{p.leverage}x</td>
+                      <td className={`px-3 py-2 font-mono text-xs tabular-nums font-semibold ${p.unrealizedPnl >= 0 ? "text-gain" : "text-loss"}`}>
+                        {money(p.unrealizedPnl)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center py-6 text-center">
+              <div>
+                <div className="font-mono text-sm text-muted-foreground">NO ACTIVE POSITION</div>
+                <div className="mt-1 font-mono text-[0.65rem] text-muted-foreground/60">AI is monitoring market conditions</div>
+              </div>
+            </div>
+          )}
+        </Panel>
+      </div>
+
+      {/* ── Risk State + AI Activity ────────────────────────────────── */}
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        <Panel title="Risk State" code="GUARDIAN" action={<Tag tone={riskState?.isLocked ? "loss" : "gain"}>{riskState?.isLocked ? "LOCKED" : "PROTECTED"}</Tag>}>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
-              <MiniStat label="Strategy" value="TREND FOLLOWING" />
-              <MiniStat label="Version" value="v1.0" />
-              <MiniStat label="Parameters" value="EMA 20/50" />
-              <MiniStat label="Risk Model" value="Conservative" />
+              <MiniStat label="Session PnL" value={money(riskState?.sessionPnl || 0)} tone={(riskState?.sessionPnl || 0) >= 0 ? "gain" : "loss"} />
+              <MiniStat label="Daily PnL" value={money(riskState?.dailyPnl || 0)} tone={(riskState?.dailyPnl || 0) >= 0 ? "gain" : "loss"} />
+              <MiniStat label="Session Target" value="+$0.50" />
+              <MiniStat label="Hard Cap" value="+$2.00" />
+              <MiniStat label="Max Loss/Trade" value="$1.00" />
+              <MiniStat label="Max Leverage" value="20x" />
+              <MiniStat label="Max Positions" value="1" />
+              <MiniStat label="Daily Loss Limit" value="-$2.00" />
             </div>
-            <div className="border-t border-hairline pt-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="label-mono text-[0.6rem]">Regime Parity</span>
-                <Tag tone="gain">PRODUCTION</Tag>
+            {riskState?.cooldownActive && (
+              <div className="rounded-sm border border-amber-signal/40 bg-amber-signal/5 px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <Timer className="h-4 w-4 text-amber-signal" />
+                  <div>
+                    <div className="font-mono text-xs font-semibold text-amber-signal">COOLDOWN ACTIVE</div>
+                    {riskState.cooldownEndsAt && (
+                      <div className="font-mono text-[0.65rem] text-muted-foreground">
+                        Expires: {new Date(riskState.cooldownEndsAt).toLocaleTimeString()}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="label-mono text-[0.6rem]">Look-Ahead Protection</span>
-                <Tag tone="gain">VERIFIED</Tag>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="label-mono text-[0.6rem]">Walk-Forward</span>
-                <Tag tone="gain">27 CANDIDATES</Tag>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="label-mono text-[0.6rem]">Overfitting Risk</span>
-                <Tag tone="gain">LOW</Tag>
-              </div>
-            </div>
+            )}
           </div>
         </Panel>
 
-        <Panel title="System Infrastructure" code="NODES" action={<Tag tone={health?.status === "healthy" ? "gain" : "loss"}>{health?.status || "UNKNOWN"}</Tag>}>
-          <div className="space-y-2">
-            {systemNodes.length > 0 ? (
-              systemNodes.map((node: any) => (
-                <div key={node.name} className="flex items-center justify-between rounded-sm border border-hairline bg-muted/30 px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <span className={`h-2 w-2 rounded-full ${node.state === "ONLINE" ? "bg-gain" : node.state === "TRAINING" ? "bg-amber-signal" : "bg-loss"}`} />
-                    <span className="font-mono text-xs text-foreground">{node.name}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-[0.65rem] text-muted-foreground">{node.latency}</span>
-                    <Tag tone={node.state === "ONLINE" ? "gain" : "warn"}>{node.state}</Tag>
-                  </div>
+        <Panel title="AI Current Activity" code="LIVE" glow action={<Tag tone="cyan">{aiActivity}</Tag>}>
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 rounded-sm border border-primary/30 bg-primary/5 px-4 py-3">
+              <BrainCircuit className="h-5 w-5 text-primary" />
+              <div>
+                <div className="font-mono text-sm font-semibold text-primary">{aiActivity}</div>
+                <div className="font-mono text-[0.65rem] text-muted-foreground">
+                  {lastEvent
+                    ? `Last event: ${lastEvent.symbol} (${fmtTime(lastEvent.timestamp)})`
+                    : "Waiting for events..."}
                 </div>
-              ))
-            ) : (
-              <div className="font-mono text-xs text-muted-foreground">System nodes loading...</div>
-            )}
-            <div className="flex items-center justify-between rounded-sm border border-hairline bg-muted/40 px-3 py-2 mt-2">
-              <span className="label-mono text-[0.6rem]">Mode</span>
-              <span className="font-mono text-xs text-primary">PAPER TRADING — No real orders</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <MiniStat label="Execution Mode" value={executionMode} />
+              <MiniStat label="Testnet Ready" value={orch?.testnetReady ? "YES" : "NO"} />
+              <MiniStat label="Runtime Tick" value={String(runtime?.stats?.tickCount || 0)} />
+              <MiniStat label="Processed" value={String(runtime?.stats?.totalProcessed || 0)} />
             </div>
           </div>
         </Panel>
       </div>
 
-      {/* ── Market Overview ─────────────────────────────────────────── */}
-      <MarketOverview d={d} aiIntel={aiIntel} feedSymbols={feedSymbols} feedStatusData={feedStatusData} />
+      {/* ── AI Decision Journal ──────────────────────────────────────── */}
+      <div className="mt-3">
+        <JournalPanel events={events} />
+      </div>
 
-      {/* ── Safety Footer ───────────────────────────────────────────── */}
+      {/* ── Last AI Decision + Last Trade ─────────────────────────── */}
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        <Panel title="Last AI Decision" code="DECISION">
+          {runtimeEvents.length > 0 ? (
+            <div className="space-y-3">
+              <div className="rounded-sm border border-hairline bg-muted/30 p-3">
+                <div className="flex items-center justify-between">
+                  <Tag tone={lastEvent?.executionResult === "TESTNET_EXECUTED" ? "gain" : lastEvent?.executionResult === "REJECTED" ? "loss" : "default"}>
+                    {lastEvent?.executionResult || "PENDING"}
+                  </Tag>
+                  <span className="font-mono text-[0.65rem] text-muted-foreground">{fmtTime(lastEvent?.timestamp || 0)}</span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <MiniStat label="Symbol" value={lastEvent?.symbol || "—"} />
+                  <MiniStat label="Decision" value={lastEvent?.decision || "—"} />
+                  <MiniStat label="Confidence" value={lastEvent?.confidence ? `${(lastEvent.confidence * 100).toFixed(1)}%` : "—"} />
+                  <MiniStat label="Strategy" value={lastEvent?.strategy || "—"} />
+                  <MiniStat label="Risk" value={lastEvent?.riskApproved ? "APPROVED" : "REJECTED"} tone={lastEvent?.riskApproved ? "gain" : "loss"} />
+                  <MiniStat label="Reason" value={lastEvent?.riskReason || "—"} />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="py-6 text-center font-mono text-sm text-muted-foreground">No decisions yet</div>
+          )}
+        </Panel>
+
+        <Panel title="Post-Trade Reviews" code="REVIEWS">
+          {aiReviews.length > 0 ? (
+            <div className="space-y-2 max-h-[280px] overflow-y-auto">
+              {aiReviews.slice(-5).reverse().map((r: any, i: number) => (
+                <div key={r.tradeId || i} className="rounded-sm border border-hairline bg-muted/30 p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Tag tone={r.side === "LONG" ? "gain" : "violet"}>{r.side}</Tag>
+                      <span className="font-mono text-xs font-semibold text-foreground">{r.symbol}</span>
+                    </div>
+                    <span className={`font-mono text-xs tabular-nums font-semibold ${r.realizedPnl >= 0 ? "text-gain" : "text-loss"}`}>
+                      {money(r.realizedPnl)}
+                    </span>
+                  </div>
+                  <div className="mt-2 font-mono text-[0.65rem] text-muted-foreground">{r.potentialLesson}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="py-6 text-center font-mono text-sm text-muted-foreground">No reviews yet</div>
+          )}
+        </Panel>
+      </div>
+
+      {/* ── Connection Status ────────────────────────────────────────── */}
       <div className="mt-3 mb-6">
-        <div className="flex items-center justify-center gap-3 rounded-sm border border-primary/20 bg-primary/5 px-4 py-3">
-          <Shield className="h-4 w-4 text-primary" />
-          <span className="font-mono text-[0.7rem] uppercase tracking-wider text-primary">
-            Paper Trading Mode · No Real Money · Risk Engine Supreme Authority · No Withdrawal Capability
-          </span>
+        <div className="flex flex-wrap items-center justify-center gap-4 rounded-sm border border-primary/20 bg-primary/5 px-4 py-3">
+          <ConnectionDot label="Binance Testnet" connected={!!isConnected} />
+          <ConnectionDot label="Database" connected={health?.status === "healthy"} />
+          <ConnectionDot label="AI Engine" connected={!!orch?.running} />
+          <ConnectionDot label="Risk Engine" connected={!riskState?.isLocked || true} />
+          <ConnectionDot label="Journal" connected={true} />
         </div>
       </div>
     </div>
   );
 }
 
-// ─── Components ──────────────────────────────────────────────────────
+// ─── Journal Panel ──────────────────────────────────────────────────
+
+function JournalPanel({ events }: { events: JournalEvent[] }) {
+  const [filter, setFilter] = useState<string>("ALL");
+  const [search, setSearch] = useState("");
+  const [importanceFilter, setImportanceFilter] = useState<string>("ALL");
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [newCount, setNewCount] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const prevLenRef = useRef(events.length);
+
+  useEffect(() => {
+    if (events.length > prevLenRef.current) {
+      if (!autoScroll) {
+        setNewCount((c) => c + (events.length - prevLenRef.current));
+      }
+    }
+    prevLenRef.current = events.length;
+  }, [events.length, autoScroll]);
+
+  useEffect(() => {
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      setNewCount(0);
+    }
+  }, [events.length, autoScroll]);
+
+  const filteredEvents = useMemo(() => {
+    return events.filter((e) => {
+      if (filter !== "ALL") {
+        const categoryEvents = JOURNAL_CATEGORIES[filter] || [];
+        if (categoryEvents.length > 0 && !categoryEvents.includes(e.eventType)) return false;
+      }
+      if (importanceFilter !== "ALL" && e.importance !== importanceFilter) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        const searchable = `${e.eventType} ${e.message} ${e.symbol || ""} ${e.tradeId || ""}`.toLowerCase();
+        if (!searchable.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [events, filter, search, importanceFilter]);
+
+  return (
+    <Panel
+      title="AI Decision Journal"
+      code="LIVE"
+      glow
+      action={
+        <div className="flex items-center gap-2">
+          <Tag tone="cyan">LIVE FEED</Tag>
+          <Tag>{events.length} events</Tag>
+        </div>
+      }
+    >
+      {/* Filters */}
+      <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-hairline pb-3">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Search journal..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-sm border border-hairline bg-muted/30 py-1.5 pl-8 pr-3 font-mono text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+          />
+          {search && (
+            <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2">
+              <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+            </button>
+          )}
+        </div>
+        <div className="flex gap-1">
+          {["ALL", "AI", "MARKET", "RISK", "TRADE", "POSITION", "SYSTEM", "ERROR"].map((cat) => (
+            <button
+              key={cat}
+              onClick={() => setFilter(cat)}
+              className={`rounded-sm px-2 py-1 font-mono text-[0.6rem] uppercase tracking-wider transition-colors ${
+                filter === cat
+                  ? "bg-primary/20 text-primary"
+                  : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+        <select
+          value={importanceFilter}
+          onChange={(e) => setImportanceFilter(e.target.value)}
+          className="rounded-sm border border-hairline bg-muted/30 px-2 py-1 font-mono text-[0.6rem] text-foreground"
+        >
+          <option value="ALL">All importance</option>
+          <option value="LOW">LOW</option>
+          <option value="MEDIUM">MEDIUM</option>
+          <option value="HIGH">HIGH</option>
+          <option value="CRITICAL">CRITICAL</option>
+        </select>
+      </div>
+
+      {/* New events indicator */}
+      {newCount > 0 && !autoScroll && (
+        <button
+          onClick={() => {
+            setAutoScroll(true);
+            setNewCount(0);
+          }}
+          className="mb-2 flex w-full items-center justify-center gap-2 rounded-sm border border-primary/40 bg-primary/10 py-1.5 font-mono text-xs text-primary transition-colors hover:bg-primary/20"
+        >
+          <ArrowDownRight className="h-3 w-3" />
+          {newCount} new event{newCount > 1 ? "s" : ""} — click to scroll to latest
+        </button>
+      )}
+
+      {/* Events */}
+      <div
+        ref={scrollRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+          setAutoScroll(atBottom);
+        }}
+        className="max-h-[500px] space-y-1 overflow-y-auto"
+      >
+        {filteredEvents.length > 0 ? (
+          filteredEvents.map((event) => <JournalEntry key={event.id} event={event} />)
+        ) : (
+          <div className="py-8 text-center">
+            <div className="font-mono text-sm text-muted-foreground">
+              {events.length === 0 ? "No journal events yet" : "No events match filters"}
+            </div>
+            <div className="mt-1 font-mono text-[0.65rem] text-muted-foreground/60">
+              {events.length === 0 ? "Events will appear as the AI processes market data" : "Try adjusting filters"}
+            </div>
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function JournalEntry({ event }: { event: JournalEvent }) {
+  const Icon = EVENT_ICONS[event.eventType] || Activity;
+  const tone = IMPORTANCE_TONE[event.importance] || "default";
+  return (
+    <div className="flex gap-3 rounded-sm border border-hairline/60 bg-muted/20 px-3 py-2 transition-colors hover:bg-primary/5">
+      <div className="flex-shrink-0 pt-0.5">
+        <Icon className={`h-4 w-4 ${
+          tone === "gain" ? "text-gain" : tone === "loss" ? "text-loss" : tone === "warn" ? "text-amber-signal" : tone === "cyan" ? "text-cyan-400" : "text-muted-foreground"
+        }`} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[0.6rem] text-muted-foreground">{fmtTime(event.timestamp)}</span>
+          <Tag tone={tone}>{event.importance}</Tag>
+          <span className="font-mono text-[0.6rem] text-primary">{event.eventType}</span>
+          {event.symbol && <span className="font-mono text-[0.6rem] text-foreground">{event.symbol}</span>}
+        </div>
+        <div className="mt-0.5 font-mono text-xs text-foreground leading-relaxed">{event.message}</div>
+        {event.riskDecision && (
+          <div className="mt-1 font-mono text-[0.6rem] text-muted-foreground">
+            Risk: {event.riskDecision.approved ? "APPROVED" : "REJECTED"} — {event.riskDecision.reason}
+          </div>
+        )}
+        {event.details && (
+          <div className="mt-1 font-mono text-[0.6rem] text-muted-foreground/70">
+            {JSON.stringify(event.details).slice(0, 120)}
+            {JSON.stringify(event.details).length > 120 ? "..." : ""}
+          </div>
+        )}
+      </div>
+      {event.tradeId && (
+        <div className="flex-shrink-0">
+          <span className="font-mono text-[0.55rem] text-muted-foreground/50">{event.tradeId}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Shared Components ──────────────────────────────────────────────
 
 function StatusIndicator({ label, state }: { label: string; state: string }) {
-  const isOnline = state === "ONLINE" || state === "ACTIVE" || state === "SIMULATION";
+  const isOk = state === "CONNECTED" || state === "ACTIVE" || state === "NEON POSTGRESQL" || state === "PROTECTED" || state === "PAPER" || state === "TESTNET";
   return (
     <div className="flex items-center gap-2 rounded-sm border border-hairline bg-muted/30 px-3 py-2">
-      <span className={`h-2 w-2 rounded-full ${isOnline ? "bg-gain" : state === "PAUSED" ? "bg-amber-signal" : "bg-loss"}`} />
+      <span className={`h-2 w-2 rounded-full ${isOk ? "bg-gain" : state === "LOCKED" || state === "COOLDOWN" ? "bg-amber-signal" : state === "INACTIVE" || state === "OFFLINE" ? "bg-loss" : "bg-gain"}`} />
       <div>
         <div className="label-mono text-[0.55rem]">{label}</div>
         <div className="font-mono text-xs font-semibold text-foreground">{state}</div>
@@ -449,102 +684,62 @@ function StatusIndicator({ label, state }: { label: string; state: string }) {
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function MiniStat({ label, value, tone }: { label: string; value: string; tone?: "gain" | "loss" }) {
   return (
     <div className="rounded-sm border border-hairline bg-muted/30 px-3 py-2">
       <div className="label-mono text-[0.55rem]">{label}</div>
-      <div className="font-mono text-xs font-semibold text-foreground">{value}</div>
+      <div className={`font-mono text-xs font-semibold ${tone === "gain" ? "text-gain" : tone === "loss" ? "text-loss" : "text-foreground"}`}>{value}</div>
     </div>
   );
 }
 
-export function Row({ k, v, tone }: { k: string; v: string; tone?: "gain" | "loss" }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <dt className="label-mono">{k}</dt>
-      <dd className={`font-mono text-xs ${tone === "gain" ? "text-gain" : tone === "loss" ? "text-loss" : "text-foreground"}`}>{v}</dd>
-    </div>
-  );
-}
-
-export function GaugeBar({ label, used, cap, tone }: { label: string; used: number; cap: number; tone: "primary" | "loss" | "cyan" | "amber" }) {
-  const pct = (used / cap) * 100;
+function GaugeBar({ label, used, cap, tone }: { label: string; used: number; cap: number; tone: "primary" | "loss" | "cyan" }) {
+  const pct = cap > 0 ? Math.min((used / cap) * 100, 100) : 0;
   return (
     <div>
       <div className="flex items-baseline justify-between">
         <span className="label-mono">{label}</span>
         <span className="font-mono text-[0.7rem] tabular-nums text-foreground">
-          {"$" + used.toLocaleString()} / {"$" + cap.toLocaleString()}
+          {money(used)} / {money(cap)}
         </span>
       </div>
-      <Meter value={pct} tone={tone} className="mt-1.5" />
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted/50">
+        <div
+          className={`h-full rounded-full transition-all ${
+            tone === "primary" ? "bg-primary" : tone === "loss" ? "bg-loss" : "bg-cyan-400"
+          }`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
       <div className="mt-1 font-mono text-[0.6rem] text-muted-foreground">{pct.toFixed(1)}% consumed</div>
     </div>
   );
 }
 
-function FeedDot({ state }: { state: string }) {
-  const color = state === "ONLINE" ? "bg-gain" : state === "DEGRADED" ? "bg-amber-signal" : state === "STALE" ? "bg-amber-signal" : "bg-loss";
-  const animate = state === "ONLINE" ? "animate-pulse" : "";
+function ConnectionDot({ label, connected }: { label: string; connected: boolean }) {
   return (
-    <div className="flex items-center justify-center">
-      <span className={`h-2.5 w-2.5 rounded-full ${color} ${animate}`} />
+    <div className="flex items-center gap-2">
+      <span className={`h-2 w-2 rounded-full ${connected ? "bg-gain animate-pulse" : "bg-loss"}`} />
+      <span className="font-mono text-[0.65rem] text-muted-foreground">{label}</span>
     </div>
   );
 }
 
-// Phase 8C: All 12 symbols from the symbol universe
-const ALL_SYMBOLS = [
-  "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", // T1
-  "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", // T2
-  "AVAXUSDT", "DOTUSDT", "NEARUSDT", "APTUSDT", // T3
-];
+// ─── Local Journal Event type (matches backend) ────────────────────
 
-function MarketOverview({ d, aiIntel, feedSymbols, feedStatusData }: { d: any; aiIntel: any; feedSymbols: any[]; feedStatusData: any }) {
-  return (
-    <div className="mt-3">
-      <Panel title="Market Overview" code="BINANCE FUTURES" action={<Tag tone={feedStatusData?.aggregate?.overallFeedState === "ONLINE" ? "gain" : "warn"}>{feedStatusData?.aggregate?.overallFeedState || "OFFLINE"}</Tag>}>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[50rem] border-collapse">
-            <thead>
-              <tr className="border-b border-hairline">
-                {["Symbol", "Price", "24h Δ", "Feed State", "Data Age", "Feed"].map((h) => (
-                  <th key={h} className="label-mono px-4 py-2 text-left font-normal text-[0.65rem]">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {ALL_SYMBOLS.map((symbol) => (
-                <MarketRow key={symbol} symbol={symbol} d={d} feedSymbols={feedSymbols} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
-function MarketRow({ symbol, d, feedSymbols }: { symbol: string; d: any; feedSymbols: any[] }) {
-  const feed = feedSymbols.find((f: any) => f.symbol === symbol);
-  const feedState = (feed?.feedState || "OFFLINE") as string;
-  const dataAge = feed?.dataAgeMs;
-  const isInfinity = !Number.isFinite(dataAge);
-  const ageLabel = isInfinity ? "N/A" : dataAge < 60000 ? String(Math.round(dataAge / 1000)) + "s" : "STALE";
-  const price = feed?.price || 0;
-  const change24h = feed?.change24h || 0;
-  return (
-    <tr className="border-b border-hairline/60 transition-colors last:border-0 hover:bg-primary/5">
-      <td className="px-4 py-2 font-mono text-xs font-semibold text-foreground">{symbol}</td>
-      <td className="px-4 py-2 font-mono text-xs tabular-nums text-foreground">{price > 0 ? '$' + price.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}</td>
-      <td className={'px-4 py-2 font-mono text-xs tabular-nums ' + (change24h >= 0 ? 'text-gain' : 'text-loss')}>{change24h >= 0 ? '+' : ''}{change24h.toFixed(2)}</td>
-      <td className="px-4 py-2">
-        <Tag tone={feedState === "ONLINE" ? "gain" : feedState === "DEGRADED" ? "warn" : "loss"}>{feedState}</Tag>
-      </td>
-      <td className="px-4 py-2 font-mono text-[0.65rem] tabular-nums text-muted-foreground">{ageLabel}</td>
-      <td className="px-4 py-2">
-        <FeedDot state={feedState} />
-      </td>
-    </tr>
-  );
-}
+type JournalEvent = {
+  id: string;
+  timestamp: number;
+  eventType: string;
+  importance: string;
+  symbol?: string;
+  message: string;
+  action?: string;
+  pnl?: number;
+  position?: { symbol: string; side: string; entryPrice: number; margin: number; leverage: number };
+  riskDecision?: { approved: boolean; reason: string; checks?: Array<{ name: string; passed: boolean; message: string }> };
+  reasoning?: string;
+  tradeId?: string;
+  decisionId?: string;
+  details?: Record<string, unknown>;
+};
