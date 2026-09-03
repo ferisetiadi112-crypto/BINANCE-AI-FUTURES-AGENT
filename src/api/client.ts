@@ -34,6 +34,7 @@ import {
   getJournal,
   getAiReviews,
   getOrchestratorData,
+  getDiagnostic,
 } from "../backend/api";
 import type { ApiResponse } from "../types/api";
 
@@ -207,5 +208,12 @@ export async function fetchReviews() {
 
 export async function fetchOrchestratorData() {
   const result = await getOrchestratorData();
+  return result as ApiResponse<any>;
+}
+
+// ─── Diagnostic (P7D-3-FIX-CONNECTION-DIAGNOSTIC) ────────────────
+
+export async function fetchDiagnostic() {
+  const result = await getDiagnostic();
   return result as ApiResponse<any>;
 }

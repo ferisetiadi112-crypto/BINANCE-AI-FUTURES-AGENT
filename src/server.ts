@@ -79,7 +79,14 @@ export default {
         runtimeStarted = true;
         const mode = detectExecutionMode();
         const tradingEnabled = detectTradingEnabled();
-        startTradingRuntime(mode, tradingEnabled);
+        console.log(`[server] Starting runtime: mode=${mode}, tradingEnabled=${tradingEnabled}`);
+        try {
+          await startTradingRuntime(mode, tradingEnabled);
+          console.log(`[server] Runtime started successfully: mode=${mode}`);
+        } catch (err) {
+          console.error(`[server] Runtime start failed: ${err}`);
+          // Runtime still runs — orchestrator exists but testnetReady=false
+        }
       }
 
       const handler = await getServerEntry();

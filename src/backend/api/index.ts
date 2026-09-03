@@ -10,6 +10,7 @@
  */
 
 import { createServerFn } from "@tanstack/react-start";
+export { getDiagnostic } from "./diagnostic";
 import {
   fetchDashboard,
   fetchRuntime,

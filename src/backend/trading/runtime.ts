@@ -305,10 +305,20 @@ export async function startTradingRuntime(
   _stats.startedAt = Date.now();
   _stats.executionMode = executionMode;
 
+  logger.info(
+    "trading-runtime",
+    `Orchestrator created: executionMode=${executionMode}, tradingEnabled=${tradingEnabled}`,
+  );
+
   // Initialize testnet if requested
   if (executionMode === "TESTNET") {
+    logger.info("trading-runtime", "Attempting testnet initialization...");
     const testnetReady = await _orchestrator.initializeTestnet();
     _stats.testnetReady = testnetReady;
+    logger.info(
+      "trading-runtime",
+      `Testnet initialization result: testnetReady=${testnetReady}`,
+    );
 
     if (!testnetReady) {
       // P7A: NO PAPER fallback — execution stays disabled until testnet is healthy.
