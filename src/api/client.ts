@@ -35,6 +35,7 @@ import {
   getAiReviews,
   getOrchestratorData,
   getDiagnostic,
+  getAiLogbook,
 } from "../backend/api";
 import type { ApiResponse } from "../types/api";
 
@@ -208,6 +209,13 @@ export async function fetchReviews() {
 
 export async function fetchOrchestratorData() {
   const result = await getOrchestratorData();
+  return result as ApiResponse<any>;
+}
+
+// ─── AI Logbook (P7D-4) ──────────────────────────────────────────
+
+export async function fetchAiLogbook() {
+  const result = await getAiLogbook();
   return result as ApiResponse<any>;
 }
 

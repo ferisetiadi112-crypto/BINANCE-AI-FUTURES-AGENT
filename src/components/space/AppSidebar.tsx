@@ -48,6 +48,7 @@ const groups = [
     label: "Cognition",
     items: [
       { title: "Learning", url: "/learning", icon: Activity },
+      { title: "AI Logbook", url: "/ai-logbook", icon: ScrollText },
       { title: "AI Audit", url: "/ai-audit", icon: ScrollText },
     ],
   },
