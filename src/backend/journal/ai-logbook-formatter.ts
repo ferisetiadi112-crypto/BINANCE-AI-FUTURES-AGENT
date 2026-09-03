@@ -23,6 +23,7 @@ export type LogbookCategory =
   | "MEMORI"
   | "PEMBELAJARAN"
   | "SISTEM"
+  | "TEKNIS"
   | "ERROR";
 
 export const EVENT_TO_CATEGORY: Partial<Record<JournalEventType, LogbookCategory>> = {
@@ -65,6 +66,7 @@ export const CATEGORY_LABELS: Record<LogbookCategory, string> = {
   MEMORI: "MEMORI",
   PEMBELAJARAN: "PEMBELAJARAN",
   SISTEM: "AKTIVITAS SISTEM",
+  TEKNIS: "TEKNIS",
   ERROR: "KESALAHAN SISTEM",
 };
 
@@ -76,6 +78,7 @@ export const CATEGORY_ICONS: Record<LogbookCategory, string> = {
   MEMORI: "💾",
   PEMBELAJARAN: "📚",
   SISTEM: "⚙",
+  TEKNIS: "🔧",
   ERROR: "⚠",
 };
 
@@ -102,6 +105,8 @@ export type LogbookEntry = {
   learningDetail: string | null;
   technicalEventId: string;
   technicalEventType: JournalEventType;
+  /** Whether this event is routine monitoring/system noise */
+  isNoise: boolean;
   rawData: JournalEvent;
 };
 
@@ -347,10 +352,40 @@ function determineLearningStatus(event: JournalEvent): {
   return { status: "BELUM ADA", detail: null };
 }
 
+// ─── Noise Classification ──────────────────────────────────────────
+
+/**
+ * Events that are routine monitoring / system noise.
+ * These are filtered OUT of the default Logbook timeline.
+ * They can still be viewed via the TEKNIS filter.
+ */
+const NOISE_EVENTS: Set<JournalEventType> = new Set([
+  "POSITION_MONITOR",
+  "PNL_UPDATED",
+  "PERIODIC_REPORT",
+  "RISK_LOCKED",
+  "COOLDOWN_STARTED",
+  "DAILY_LOSS_LIMIT",
+  "PROFIT_TARGET_REACHED",
+  "HARD_PROFIT_CAP",
+  "STARTUP_RECONCILIATION",
+]);
+
+/**
+ * Whether an event is routine monitoring / system noise.
+ */
+export function isNoiseEvent(event: JournalEvent): boolean {
+  return NOISE_EVENTS.has(event.eventType);
+}
+
 // ─── Main Formatter ─────────────────────────────────────────────────
 
 export function formatLogbookEntry(event: JournalEvent): LogbookEntry {
-  const category = EVENT_TO_CATEGORY[event.eventType] || "SISTEM";
+  const noise = isNoiseEvent(event);
+  // Noise events are classified as TEKNIS in the logbook
+  const category: LogbookCategory = noise
+    ? "TEKNIS"
+    : (EVENT_TO_CATEGORY[event.eventType] || "SISTEM");
 
   return {
     id: event.id,
@@ -373,6 +408,7 @@ export function formatLogbookEntry(event: JournalEvent): LogbookEntry {
     learningDetail: determineLearningStatus(event).detail,
     technicalEventId: event.id,
     technicalEventType: event.eventType,
+    isNoise: noise,
     rawData: event,
   };
 }

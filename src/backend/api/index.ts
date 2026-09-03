@@ -441,17 +441,23 @@ export const getJournal = createServerFn({ method: "GET" }).handler(
 // ─── GET /api/ai-logbook — AI Logbook (Bahasa Indonesia) ─────────
 // P7D-4: Human-readable activity log in Bahasa Indonesia
 
-export const getAiLogbook = createServerFn({ method: "GET" }).handler(
-  async () => {
+export const getAiLogbook = createServerFn({ method: "GET" })
+  .validator((input: { includeNoise?: boolean } | undefined) => input ?? {})
+  .handler(async ({ data }) => {
     try {
       const { formatLogbookEntries, computeLogbookSummary } = await import(
         "../journal/ai-logbook-formatter"
       );
 
       // P7D-4.1: Read from PostgreSQL (persistent source of truth)
-      const events = await getRecentJournalEventsAsync(500);
-      const entries = formatLogbookEntries(events);
-      const summary = computeLogbookSummary(entries);
+      const allEntries = formatLogbookEntries(await getRecentJournalEventsAsync(500));
+
+      // P7D-4.3: Filter noise events unless explicitly requested
+      const entries = data.includeNoise
+        ? allEntries
+        : allEntries.filter((e: any) => !e.isNoise);
+
+      const summary = computeLogbookSummary(allEntries); // Summary always counts all events
 
       const orchestrator = getOrchestrator();
       const runtimeActive = orchestrator !== null;
@@ -473,8 +479,7 @@ export const getAiLogbook = createServerFn({ method: "GET" }).handler(
         error: err instanceof Error ? err.message : "Unknown error",
       } as any);
     }
-  },
-);
+  });
 
 // ─── GET /api/reviews — Post-Trade Reviews ────────────────────────
 

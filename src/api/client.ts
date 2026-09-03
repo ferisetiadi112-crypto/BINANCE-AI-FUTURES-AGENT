@@ -214,8 +214,8 @@ export async function fetchOrchestratorData() {
 
 // ─── AI Logbook (P7D-4) ──────────────────────────────────────────
 
-export async function fetchAiLogbook() {
-  const result = await getAiLogbook();
+export async function fetchAiLogbook(includeNoise = false) {
+  const result = await getAiLogbook({ data: { includeNoise } });
   return result as ApiResponse<any>;
 }
 

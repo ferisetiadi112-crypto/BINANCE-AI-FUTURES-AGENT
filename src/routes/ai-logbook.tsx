@@ -57,9 +57,8 @@ const FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: "KEPUTUSAN", label: "KEPUTUSAN" },
   { value: "RISIKO", label: "RISIKO" },
   { value: "TRADING", label: "TRADING" },
-  { value: "MEMORI", label: "MEMORI" },
   { value: "PEMBELAJARAN", label: "PEMBELAJARAN" },
-  { value: "SISTEM", label: "SISTEM" },
+  { value: "TEKNIS", label: "TEKNIS" },
   { value: "ERROR", label: "ERROR" },
 ];
 
@@ -319,8 +318,8 @@ function AiLogbook() {
   const [searchQuery, setSearchQuery] = useState("");
 
   const { data: logbookResp, isLoading: logbookLoading, isError: logbookError } = useQuery({
-    queryKey: ["ai-logbook"],
-    queryFn: fetchAiLogbook,
+    queryKey: ["ai-logbook", activeFilter === "TEKNIS"],
+    queryFn: () => fetchAiLogbook(activeFilter === "TEKNIS"),
     refetchInterval: 10_000,
     retry: 2,
     retryDelay: 2000,
@@ -337,7 +336,7 @@ function AiLogbook() {
   const summary = logbook?.summary;
   const runtimeActive = logbook?.runtimeActive ?? false;
 
-  // Filter entries
+  // Filter entries (client-side search filter on top of server-side noise filter)
   const filteredEntries = useMemo(() => {
     let result = entries;
 

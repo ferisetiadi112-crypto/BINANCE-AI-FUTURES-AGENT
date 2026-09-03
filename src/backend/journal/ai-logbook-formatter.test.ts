@@ -17,6 +17,7 @@ import {
   computeLogbookSummary,
   EVENT_TO_CATEGORY,
   CATEGORY_LABELS,
+  isNoiseEvent,
   type LogbookCategory,
 } from "./ai-logbook-formatter";
 import type { JournalEvent } from "./index";
@@ -372,5 +373,253 @@ describe("AI Logbook Formatter — Safety", () => {
     const entry = formatLogbookEntry(event);
     expect(entry.technicalEventId).toBe("JEV-12345-42");
     expect(entry.technicalEventType).toBe("MARKET_SCAN");
+  });
+});
+
+// ─── P7D-4.3: Behavioral Cleanup Tests ───────────────────────────────
+
+describe("AI Logbook Formatter — Noise Classification", () => {
+  it("classifies POSITION_MONITOR as noise", () => {
+    const event = createEvent({ eventType: "POSITION_MONITOR" });
+    expect(isNoiseEvent(event)).toBe(true);
+  });
+
+  it("classifies PNL_UPDATED as noise", () => {
+    const event = createEvent({ eventType: "PNL_UPDATED" });
+    expect(isNoiseEvent(event)).toBe(true);
+  });
+
+  it("classifies PERIODIC_REPORT as noise", () => {
+    const event = createEvent({ eventType: "PERIODIC_REPORT" });
+    expect(isNoiseEvent(event)).toBe(true);
+  });
+
+  it("classifies RISK_LOCKED as noise", () => {
+    const event = createEvent({ eventType: "RISK_LOCKED" });
+    expect(isNoiseEvent(event)).toBe(true);
+  });
+
+  it("classifies COOLDOWN_STARTED as noise", () => {
+    const event = createEvent({ eventType: "COOLDOWN_STARTED" });
+    expect(isNoiseEvent(event)).toBe(true);
+  });
+
+  it("classifies DAILY_LOSS_LIMIT as noise", () => {
+    const event = createEvent({ eventType: "DAILY_LOSS_LIMIT" });
+    expect(isNoiseEvent(event)).toBe(true);
+  });
+
+  it("classifies PROFIT_TARGET_REACHED as noise", () => {
+    const event = createEvent({ eventType: "PROFIT_TARGET_REACHED" });
+    expect(isNoiseEvent(event)).toBe(true);
+  });
+
+  it("classifies HARD_PROFIT_CAP as noise", () => {
+    const event = createEvent({ eventType: "HARD_PROFIT_CAP" });
+    expect(isNoiseEvent(event)).toBe(true);
+  });
+
+  it("classifies STARTUP_RECONCILIATION as noise", () => {
+    const event = createEvent({ eventType: "STARTUP_RECONCILIATION" });
+    expect(isNoiseEvent(event)).toBe(true);
+  });
+
+  it("does NOT classify MARKET_SCAN as noise", () => {
+    const event = createEvent({ eventType: "MARKET_SCAN" });
+    expect(isNoiseEvent(event)).toBe(false);
+  });
+
+  it("does NOT classify RISK_CHECK as noise", () => {
+    const event = createEvent({ eventType: "RISK_CHECK" });
+    expect(isNoiseEvent(event)).toBe(false);
+  });
+
+  it("does NOT classify TRADE_OPENED as noise", () => {
+    const event = createEvent({ eventType: "TRADE_OPENED" });
+    expect(isNoiseEvent(event)).toBe(false);
+  });
+
+  it("does NOT classify TRADE_CLOSED as noise", () => {
+    const event = createEvent({ eventType: "TRADE_CLOSED" });
+    expect(isNoiseEvent(event)).toBe(false);
+  });
+
+  it("does NOT classify SYSTEM_STARTED as noise", () => {
+    const event = createEvent({ eventType: "SYSTEM_STARTED" });
+    expect(isNoiseEvent(event)).toBe(false);
+  });
+
+  it("does NOT classify SYSTEM_STOPPED as noise", () => {
+    const event = createEvent({ eventType: "SYSTEM_STOPPED" });
+    expect(isNoiseEvent(event)).toBe(false);
+  });
+});
+
+describe("AI Logbook Formatter — Noise Entries", () => {
+  it("noise events get TEKNIS category", () => {
+    const event = createEvent({ eventType: "POSITION_MONITOR" });
+    const entry = formatLogbookEntry(event);
+    expect(entry.category).toBe("TEKNIS");
+    expect(entry.categoryLabel).toBe("TEKNIS");
+    expect(entry.isNoise).toBe(true);
+  });
+
+  it("meaningful events do NOT get TEKNIS category", () => {
+    const event = createEvent({ eventType: "MARKET_SCAN" });
+    const entry = formatLogbookEntry(event);
+    expect(entry.category).toBe("ANALISIS");
+    expect(entry.isNoise).toBe(false);
+  });
+
+  it("noise events can be filtered out", () => {
+    const events = [
+      createEvent({ eventType: "MARKET_SCAN", timestamp: 1000 }),
+      createEvent({ eventType: "POSITION_MONITOR", timestamp: 2000 }),
+      createEvent({ eventType: "TRADE_OPENED", timestamp: 3000 }),
+    ];
+    const all = formatLogbookEntries(events);
+    const meaningful = all.filter((e) => !e.isNoise);
+    expect(all).toHaveLength(3);
+    expect(meaningful).toHaveLength(2);
+    expect(meaningful.every((e) => e.isNoise === false)).toBe(true);
+  });
+
+  it("noise events are NOT deleted from data", () => {
+    const events = [
+      createEvent({ eventType: "POSITION_MONITOR" }),
+    ];
+    const entries = formatLogbookEntries(events);
+    // They exist in the data, just classified as TEKNIS
+    expect(entries).toHaveLength(1);
+    const first = entries[0]!;
+    expect(first.isNoise).toBe(true);
+    expect(first.technicalEventType).toBe("POSITION_MONITOR");
+  });
+});
+
+describe("AI Logbook Formatter — Default Timeline", () => {
+  it("default timeline excludes noise by filtering isNoise=false", () => {
+    const events = [
+      createEvent({ eventType: "ANALYSIS", symbol: "BTCUSDT", timestamp: 1000 }),
+      createEvent({ eventType: "POSITION_MONITOR", symbol: "BTCUSDT", timestamp: 2000 }),
+      createEvent({ eventType: "PNL_UPDATED", timestamp: 3000 }),
+      createEvent({ eventType: "TRADE_OPENED", symbol: "ETHUSDT", timestamp: 4000 }),
+    ];
+    const entries = formatLogbookEntries(events);
+    const defaultView = entries.filter((e) => !e.isNoise);
+    expect(defaultView).toHaveLength(2);
+    expect(defaultView.map((e) => e.technicalEventType)).toEqual(["TRADE_OPENED", "ANALYSIS"]);
+  });
+
+  it("TEKNIS filter shows all events including noise", () => {
+    const events = [
+      createEvent({ eventType: "ANALYSIS", symbol: "BTCUSDT", timestamp: 1000 }),
+      createEvent({ eventType: "POSITION_MONITOR", symbol: "BTCUSDT", timestamp: 2000 }),
+    ];
+    const entries = formatLogbookEntries(events);
+    const allView = entries; // No isNoise filter
+    expect(allView).toHaveLength(2);
+  });
+});
+
+describe("AI Logbook Formatter — Meaningful Events", () => {
+  it("real ANALYSIS is displayed", () => {
+    const event = createEvent({
+      eventType: "ANALYSIS",
+      symbol: "BTCUSDT",
+      importance: "MEDIUM",
+    });
+    const entry = formatLogbookEntry(event);
+    expect(entry.description).toContain("BTCUSDT");
+    expect(entry.description).toContain("menganalisis");
+    expect(entry.isNoise).toBe(false);
+  });
+
+  it("real TRADE_OPENED is displayed", () => {
+    const event = createEvent({
+      eventType: "TRADE_OPENED",
+      symbol: "BTCUSDT",
+      importance: "HIGH",
+      position: { symbol: "BTCUSDT", side: "SHORT", entryPrice: 63000, margin: 0.5, leverage: 5 },
+    });
+    const entry = formatLogbookEntry(event);
+    expect(entry.description).toContain("SHORT");
+    expect(entry.description).toContain("BTCUSDT");
+    expect(entry.isNoise).toBe(false);
+  });
+
+  it("real TRADE_CLOSED shows PnL from event", () => {
+    const event = createEvent({
+      eventType: "TRADE_CLOSED",
+      symbol: "BTCUSDT",
+      importance: "MEDIUM",
+      pnl: 0.25,
+    });
+    const entry = formatLogbookEntry(event);
+    expect(entry.description).toContain("$0.25");
+    expect(entry.description).toContain("menutup posisi");
+    expect(entry.isNoise).toBe(false);
+  });
+
+  it("real RISK_CHECK shows correct result", () => {
+    const event = createEvent({
+      eventType: "RISK_CHECK",
+      symbol: "BTCUSDT",
+      importance: "LOW",
+      riskDecision: { approved: true, reason: "Within limits" },
+    });
+    const entry = formatLogbookEntry(event);
+    expect(entry.description).toContain("LULUS");
+    expect(entry.isNoise).toBe(false);
+  });
+
+  it("real RISK_CHECK rejected shows correct result", () => {
+    const event = createEvent({
+      eventType: "RISK_CHECK",
+      symbol: "BTCUSDT",
+      importance: "MEDIUM",
+      riskDecision: { approved: false, reason: "Exceeds max allocation" },
+    });
+    const entry = formatLogbookEntry(event);
+    expect(entry.description).toContain("DITOLAK");
+    expect(entry.reason).toContain("Exceeds max allocation");
+    expect(entry.isNoise).toBe(false);
+  });
+
+  it("timestamp comes from event, not generated", () => {
+    const ts = 1700000000000;
+    const event = createEvent({ eventType: "ANALYSIS", timestamp: ts });
+    const entry = formatLogbookEntry(event);
+    expect(entry.timestamp).toBe(ts);
+  });
+
+  it("symbol comes from event", () => {
+    const event = createEvent({ eventType: "ANALYSIS", symbol: "ETHUSDT" });
+    const entry = formatLogbookEntry(event);
+    expect(entry.symbol).toBe("ETHUSDT");
+  });
+
+  it("PnL comes from event", () => {
+    const event = createEvent({
+      eventType: "TRADE_CLOSED",
+      symbol: "BTCUSDT",
+      pnl: -0.35,
+    });
+    const entry = formatLogbookEntry(event);
+    expect(entry.description).toContain("$-0.35");
+  });
+});
+
+describe("AI Logbook Formatter — Empty & Error States", () => {
+  it("empty event list produces empty entries", () => {
+    const entries = formatLogbookEntries([]);
+    expect(entries).toHaveLength(0);
+  });
+
+  it("summary with no entries has all zeros", () => {
+    const summary = computeLogbookSummary([]);
+    expect(summary.analyses).toBe(0);
+    expect(summary.trades).toBe(0);
+    expect(summary.riskChecks).toBe(0);
   });
 });
