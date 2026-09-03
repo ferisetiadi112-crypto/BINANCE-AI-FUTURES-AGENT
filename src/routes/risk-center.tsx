@@ -24,18 +24,9 @@ function RiskCenter() {
   const risk = response?.data;
   const events = risk?.events || [];
 
-  if (isLoading || !risk) {
-    return (
-      <div className="mx-auto max-w-[110rem]">
-        <PageHeader eyebrow="Guardian · Risk Control" title="Risk Center" desc="Loading..." />
-        <div className="flex items-center justify-center py-20">
-          <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
-        </div>
-      </div>
-    );
-  }
+  // P7D-4.4: No full-page loading blocker
 
-  const profitPct = (risk.dailyProfitUsed / risk.dailyProfitCap) * 100;
+  const profitPct = risk ? (risk.dailyProfitUsed / risk.dailyProfitCap) * 100 : 0;
   const lossPct = (risk.dailyLossUsed / risk.dailyLossLimit) * 100;
   const exposurePct = (risk.totalExposure / risk.maxExposure) * 100;
   const leveragePct = (risk.currentLeverage / risk.maxLeverage) * 100;
@@ -47,6 +38,13 @@ function RiskCenter() {
         title="Risk Center"
         desc="Daily risk boundaries, exposure limits, leverage controls and emergency stop. Risk Engine has final authority over all trades."
       />
+
+      {isLoading && !risk && (
+        <div className="flex items-center gap-3 rounded-sm border border-primary/20 bg-primary/5 px-4 py-3 mb-3">
+          <div className="pulse-dot h-3 w-3 rounded-full bg-primary" />
+          <span className="font-mono text-xs text-muted-foreground">Loading risk data...</span>
+        </div>
+      )}
 
       <div className="grid gap-3 lg:grid-cols-4">
         <Stat label="Risk Status" value={risk.status} sub="All systems nominal" tone="gain" icon={<ShieldCheck className="h-4 w-4" />} />

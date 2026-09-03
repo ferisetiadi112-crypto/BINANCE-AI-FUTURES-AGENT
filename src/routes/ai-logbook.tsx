@@ -359,20 +359,7 @@ function AiLogbook() {
     return result;
   }, [entries, activeFilter, searchQuery]);
 
-  if (logbookLoading && !logbookResp) {
-    return (
-      <div className="mx-auto max-w-[110rem]">
-        <PageHeader
-          eyebrow="Cognition · AI Logbook"
-          title="AI Logbook"
-          desc="Memuat aktivitas..."
-        />
-        <div className="flex items-center justify-center py-20">
-          <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
-        </div>
-      </div>
-    );
-  }
+  // P7D-4.4: No full-page loading blocker
 
   if (logbookError && !logbookResp) {
     return (

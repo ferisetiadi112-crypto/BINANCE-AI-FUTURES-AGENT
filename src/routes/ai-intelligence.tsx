@@ -25,17 +25,7 @@ function AIIntelligence() {
 
   const ai = response?.data?.aiIntelligence;
 
-  if (isLoading || !ai) {
-    return (
-      <div className="mx-auto max-w-[110rem]">
-        <PageHeader eyebrow="Cognition · Inference Core" title="AI Intelligence" desc="Loading..." />
-        <div className="flex items-center justify-center py-20">
-          <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
-          <span className="ml-3 font-mono text-sm text-muted-foreground">Initializing inference core...</span>
-        </div>
-      </div>
-    );
-  }
+  // P7D-4.4: No full-page loading blocker
 
   return (
     <div className="mx-auto max-w-[110rem]">
@@ -44,6 +34,13 @@ function AIIntelligence() {
         title="AI Intelligence"
         desc="What the agent believes about the market right now, and why it chose its current course."
       />
+
+      {isLoading && !ai && (
+        <div className="flex items-center gap-3 rounded-sm border border-primary/20 bg-primary/5 px-4 py-3 mb-3">
+          <div className="pulse-dot h-3 w-3 rounded-full bg-primary" />
+          <span className="font-mono text-xs text-muted-foreground">Initializing inference core...</span>
+        </div>
+      )}
 
       <div className="grid gap-3 lg:grid-cols-4">
         <Stat label="AI Confidence" value={`${ai.confidence}%`} sub="High conviction" tone="gain" icon={<BrainCircuit className="h-4 w-4" />} />

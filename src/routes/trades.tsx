@@ -26,16 +26,7 @@ function Trades() {
   const losses = trades.filter((t: any) => t.pnl < 0);
   const totalPnl = trades.reduce((a: number, t: any) => a + t.pnl, 0);
 
-  if (isLoading) {
-    return (
-      <div className="mx-auto max-w-[110rem]">
-        <PageHeader eyebrow="History · Trade Log" title="Trades" desc="Loading..." />
-        <div className="flex items-center justify-center py-20">
-          <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
-        </div>
-      </div>
-    );
-  }
+  // P7D-4.4: Show page header immediately, data loads inline
 
   return (
     <div className="mx-auto max-w-[110rem]">
@@ -44,6 +35,13 @@ function Trades() {
         title="Trades"
         desc="Complete trade history with PnL, duration and strategy attribution."
       />
+
+      {isLoading && trades.length === 0 && (
+        <div className="flex items-center gap-3 rounded-sm border border-primary/20 bg-primary/5 px-4 py-3 mb-3">
+          <div className="pulse-dot h-3 w-3 rounded-full bg-primary" />
+          <span className="font-mono text-xs text-muted-foreground">Loading trades...</span>
+        </div>
+      )}
 
       <div className="grid gap-3 lg:grid-cols-4">
         <Stat label="Total Trades" value={String(trades.length)} sub="Showing recent" icon={<Target className="h-4 w-4" />} />

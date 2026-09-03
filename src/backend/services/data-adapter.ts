@@ -41,16 +41,32 @@ import { generateMarketState, updateSnapshot as updateRuntimeSnapshot, getMarket
 export type DataSource = "mock" | "database" | "live";
 
 let currentSource: DataSource = "mock";
+let _dataSourceChecked = false;
+let _dataSourceCheckTime = 0;
+const DATA_SOURCE_CACHE_TTL_MS = 30_000; // Re-check every 30s
 
+/**
+ * P7D-4.4: Cache the data source check to avoid repeated DB calls on every
+ * server function request. Previously, EVERY API endpoint called getDataSource()
+ * which hit PostgreSQL accountRepository.getMain() on every single request.
+ */
 export async function getDataSource(): Promise<DataSource> {
+  const now = Date.now();
+  if (_dataSourceChecked && (now - _dataSourceCheckTime) < DATA_SOURCE_CACHE_TTL_MS) {
+    return currentSource;
+  }
   try {
     const account = await accountRepository.getMain();
     if (account) {
       currentSource = "database";
+    } else {
+      currentSource = "mock";
     }
   } catch {
     currentSource = "mock";
   }
+  _dataSourceChecked = true;
+  _dataSourceCheckTime = now;
   return currentSource;
 }
 

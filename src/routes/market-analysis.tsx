@@ -32,17 +32,7 @@ function MarketAnalysis() {
 
   const m = response?.data;
 
-  if (isLoading || !m) {
-    return (
-      <div className="mx-auto max-w-[110rem]">
-        <PageHeader eyebrow="Sensors · Deep Scan" title="Market Analysis" desc="Loading..." />
-        <div className="flex items-center justify-center py-20">
-          <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
-          <span className="ml-3 font-mono text-sm text-muted-foreground">Scanning markets...</span>
-        </div>
-      </div>
-    );
-  }
+  // P7D-4.4: Show page header immediately, data loads inline
 
   return (
     <div className="mx-auto max-w-[110rem]">
@@ -51,6 +41,19 @@ function MarketAnalysis() {
         title="Market Analysis"
         desc="Order flow, liquidity structure and cross-asset context feeding the inference core."
       />
+
+      {isLoading && !m && (
+        <div className="flex items-center gap-3 rounded-sm border border-primary/20 bg-primary/5 px-4 py-3 mb-3">
+          <div className="pulse-dot h-3 w-3 rounded-full bg-primary" />
+          <span className="font-mono text-xs text-muted-foreground">Scanning markets...</span>
+        </div>
+      )}
+
+      {!m && !isLoading && (
+        <div className="rounded-sm border border-amber-signal/20 bg-amber-signal/5 px-4 py-3 mb-3">
+          <span className="font-mono text-xs text-amber-signal">Market data unavailable — system may still be starting up.</span>
+        </div>
+      )}
 
       <div className="grid gap-3 lg:grid-cols-4">
         <Stat label="Book Imbalance" value={`${m.bookImbalance.bid} / ${m.bookImbalance.ask}`} sub="Bids favored" tone="gain" />

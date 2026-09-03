@@ -28,17 +28,7 @@ function Trading() {
   const runtime = response?.data;
   const position = runtime?.position;
 
-  if (isLoading || !runtime) {
-    return (
-      <div className="mx-auto max-w-[110rem]">
-        <PageHeader eyebrow="Execution · Order Flow" title="Trading" desc="Loading..." />
-        <div className="flex items-center justify-center py-20">
-          <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
-          <span className="ml-3 font-mono text-sm text-muted-foreground">Initializing execution engine...</span>
-        </div>
-      </div>
-    );
-  }
+  // P7D-4.4: No full-page loading blocker
 
   return (
     <div className="mx-auto max-w-[110rem]">
@@ -47,6 +37,13 @@ function Trading() {
         title="Trading"
         desc="Open positions, entry management and recent trade execution."
       />
+
+      {isLoading && !runtime && (
+        <div className="flex items-center gap-3 rounded-sm border border-primary/20 bg-primary/5 px-4 py-3 mb-3">
+          <div className="pulse-dot h-3 w-3 rounded-full bg-primary" />
+          <span className="font-mono text-xs text-muted-foreground">Initializing execution engine...</span>
+        </div>
+      )}
 
       <div className="grid gap-3 lg:grid-cols-4">
         <Stat label="Open Positions" value={position ? "1" : "0"} sub={position ? "1 symbol active" : "No positions"} icon={<Target className="h-4 w-4" />} />

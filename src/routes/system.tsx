@@ -38,21 +38,20 @@ function System() {
   const config = system?.config;
   const nodes = system?.nodes || [];
 
-  if (systemLoading || !system) {
-    return (
-      <div className="mx-auto max-w-[110rem]">
-        <PageHeader eyebrow="Infrastructure · System Status" title="System" desc="Loading..." />
-        <div className="flex items-center justify-center py-20">
-          <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
-        </div>
-      </div>
-    );
-  }
+  // P7D-4.4: No full-page loading blocker
 
   const online = nodes.filter((n: any) => n.state === "ONLINE").length;
 
   return (
     <div className="mx-auto max-w-[110rem]">
+      <PageHeader eyebrow="Infrastructure · System Status" title="System" desc="System configuration, infrastructure status and environment details." />
+
+      {systemLoading && !system && (
+        <div className="flex items-center gap-3 rounded-sm border border-primary/20 bg-primary/5 px-4 py-3 mb-3">
+          <div className="pulse-dot h-3 w-3 rounded-full bg-primary" />
+          <span className="font-mono text-xs text-muted-foreground">Loading system data...</span>
+        </div>
+      )}
       <PageHeader
         eyebrow="Infrastructure · System Status"
         title="System"
