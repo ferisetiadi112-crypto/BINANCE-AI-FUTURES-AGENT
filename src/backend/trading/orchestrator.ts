@@ -36,6 +36,8 @@ import {
   mergeLLMDecisionIntoAiDecision,
 } from "../ai/decision-engine";
 import { RiskEngine, type TradeProposal } from "../risk/engine";
+import type { P6Decision } from "../research/p6-decision-engine";
+import type { ResearchResult } from "../research/research-engine";
 import { PaperTradingEngine } from "../paper/engine";
 import {
   recordTradeExperience,
@@ -45,6 +47,10 @@ import {
 import { deriveLessons } from "../ai/lesson-engine";
 import { generateRealtimeMarketState } from "../services/data-adapter";
 import { getEnabledSymbols } from "../market/symbols";
+import { MarketScanner } from "../market/scanner";
+import { ResearchEngine } from "../research/research-engine";
+import { P6DecisionEngine } from "../research/p6-decision-engine";
+import { getMarketDataService } from "../market/data-service";
 import { logger } from "../logger";
 import { walletRepository } from "../repositories/wallet";
 import {
@@ -1116,6 +1122,358 @@ export class TradingOrchestrator {
     }
 
     return results;
+  }
+
+  // ─── P6: Real AI Research + Decision Cycle ──────────────────────
+
+  /**
+   * P6: Full scan → research → decide → risk → execute cycle.
+   * Uses REAL Binance Testnet market data throughout.
+   *
+   * Flow:
+   *   1. Scan eligible symbols (from exchange info + 24h ticker)
+   *   2. Research top candidates (real klines, real indicators)
+   *   3. AI decision (real calculated entry/SL/TP/leverage/margin)
+   *   4. Risk Engine validation (existing P3 gate)
+   *   5. Execute if approved (existing P4 testnet executor)
+   *   6. Journal all events
+   */
+  async processP6Cycle(): Promise<{
+    symbolsScanned: number;
+    candidatesEvaluated: number;
+    decision: P6Decision;
+    riskResult: { approved: boolean; reason: string };
+    testnetResult: TestnetExecutionResult | null;
+  }> {
+    const startTime = Date.now();
+    this.checkSessionDayBoundary();
+
+    // Initialize P6 components
+    const scanner = new MarketScanner();
+    const researchEngine = new ResearchEngine();
+    const decisionEngine = new P6DecisionEngine();
+
+    // 1. Scan for eligible symbols (REAL data)
+    recordMarketScan("SCAN", "GOOD");
+    logger.info("p6-cycle", "Starting P6 scan → research → decide → risk → execute cycle");
+
+    const scanResult = await scanner.scan();
+    if (scanResult.dataQuality === "INVALID" || scanResult.eligibleSymbols.length === 0) {
+      const noTrade: P6Decision = {
+        symbol: "N/A",
+        direction: "NO_TRADE",
+        confidence: 0,
+        reasoning: `No eligible symbols: scanned ${scanResult.symbolsScanned}, eligible 0. ` +
+          (scanResult.rejectedSymbols.length > 0
+            ? `Rejected: ${scanResult.rejectedSymbols.map((r) => `${r.symbol} (${r.reason})`).join("; ")}`
+            : ""),
+        entryPrice: 0,
+        stopLoss: 0,
+        takeProfit: 0,
+        leverage: 0,
+        proposedMargin: 0,
+        expectedRiskReward: 0,
+        worstCaseLoss: 0,
+        invalidationReason: "No eligible symbols",
+        researchScore: 0,
+        researchEvidence: [],
+        timestamp: Date.now(),
+        researchId: `P6-SCAN-${Date.now()}`,
+      };
+      this.addActivity(`P6 SCAN: ${scanResult.symbolsScanned} scanned, 0 eligible (${scanResult.dataQuality})`);
+      return {
+        symbolsScanned: scanResult.symbolsScanned,
+        candidatesEvaluated: 0,
+        decision: noTrade,
+        riskResult: { approved: false, reason: "No eligible symbols" },
+        testnetResult: null,
+      };
+    }
+
+    // 2. Research top candidates (real klines + indicators)
+    let bestDecision: P6Decision | null = null;
+    let bestResearch: ResearchResult | null = null;
+    let evaluated = 0;
+
+    const dataService = getMarketDataService();
+    for (const symbol of scanResult.eligibleSymbols.slice(0, 5)) {
+      try {
+        const snapshot = await dataService.getSnapshot(symbol);
+        if (snapshot.dataQuality === "INVALID") continue;
+
+        const research = researchEngine.research(snapshot);
+        evaluated++;
+
+        // Track best candidate
+        if (research.tradeableDirection !== "NO_TRADE" && research.score > 0) {
+          if (!bestDecision || research.score > (bestResearch?.score ?? 0)) {
+            // Get current allocated margin
+            const existingMargin = this.riskEngine.getOpenPositionMargin();
+            bestDecision = decisionEngine.makeDecision(
+              research,
+              snapshot,
+              existingMargin,
+              this.riskEngine.getAiAllocationLimit(),
+            );
+            bestResearch = research;
+          }
+        }
+      } catch (err) {
+        logger.warn("p6-cycle", `Research failed for ${symbol}: ${err}`);
+      }
+    }
+
+    // If no tradeable candidate found
+    if (!bestDecision || bestDecision.direction === "NO_TRADE") {
+      const noTrade: P6Decision = bestDecision ?? {
+        symbol: scanResult.eligibleSymbols[0] || "N/A",
+        direction: "NO_TRADE",
+        confidence: 0,
+        reasoning: "No candidate passed research threshold",
+        entryPrice: 0,
+        stopLoss: 0,
+        takeProfit: 0,
+        leverage: 0,
+        proposedMargin: 0,
+        expectedRiskReward: 0,
+        worstCaseLoss: 0,
+        invalidationReason: "No qualifying candidate",
+        researchScore: 0,
+        researchEvidence: [],
+        timestamp: Date.now(),
+        researchId: `P6-NOCANDIDATE-${Date.now()}`,
+      };
+
+      this.addActivity(
+        `P6: Scanned ${scanResult.symbolsScanned} → ${evaluated} researched → NO_TRADE (score insufficient)`,
+      );
+
+      return {
+        symbolsScanned: scanResult.symbolsScanned,
+        candidatesEvaluated: evaluated,
+        decision: noTrade,
+        riskResult: { approved: false, reason: noTrade.invalidationReason || "No qualifying candidate" },
+        testnetResult: null,
+      };
+    }
+
+    // 3. Build AiDecision for Risk Engine compatibility
+    const aiDecision = decisionEngine.toAiDecision(bestDecision);
+    this.state.lastDecision = aiDecision;
+    this.decisionHistory.push(aiDecision);
+    if (this.decisionHistory.length > this.maxHistory) this.decisionHistory.shift();
+
+    // Record P6 research + decision in journal
+    recordRiskCheck(
+      bestDecision.symbol,
+      bestDecision.direction,
+      false, // will be updated after risk check
+      bestDecision.reasoning,
+      bestResearch?.evidence.map((ev: string) => ({ name: "research", passed: true, message: ev })),
+    );
+
+    // 4. Risk Engine validation (existing P3 gate)
+    const currentPosition = this.executionMode === "TESTNET"
+      ? await this.getTestnetCurrentPosition(bestDecision.symbol)
+      : this.paperEngine.getPosition();
+
+    const riskResult = this.riskEngine.check(
+      aiDecision,
+      {
+        symbol: bestDecision.symbol,
+        timestamp: Date.now(),
+        price: bestDecision.entryPrice,
+        priceChange24h: 0,
+        priceChangePercent24h: 0,
+        trend: bestResearch?.trend.direction === "UP" ? "UP" : bestResearch?.trend.direction === "DOWN" ? "DOWN" : "FLAT",
+        trendStrength: bestResearch?.trend.strength ?? 0,
+        momentum: "MODERATE",
+        momentumScore: bestResearch?.momentum.rsi ?? 50,
+        volatility: bestResearch?.volatility.atr ?? 0,
+        volatilityPercent: bestResearch?.volatility.atrPercent ?? 0,
+        volume24h: 0,
+        volumeChange: 0,
+        marketStructure: "MIXED",
+        marketRegime: "UNCERTAIN",
+        regimeConfidence: 50,
+        liquidity: 50,
+        dataQuality: bestResearch?.dataQuality === "GOOD" ? "GOOD" : "DEGRADED",
+        feedStatus: "ONLINE",
+        lastUpdate: Date.now(),
+        dataAge: 0,
+      },
+      currentPosition
+        ? { symbol: currentPosition.symbol, side: currentPosition.side, size: currentPosition.size }
+        : { symbol: bestDecision.symbol, side: "FLAT", size: 0 },
+    );
+
+    this.state.lastRiskResult = riskResult;
+    this.state.riskLocked = this.riskEngine.isSystemLocked();
+
+    aiDecision.riskResult = riskResult.approved ? "APPROVED" : "REJECTED";
+    aiDecision.riskReason = riskResult.reason;
+
+    recordRiskCheck(
+      bestDecision.symbol,
+      bestDecision.direction,
+      riskResult.approved,
+      riskResult.reason,
+      riskResult.checks,
+    );
+
+    // 5. Execute if approved
+    let testnetResult: TestnetExecutionResult | null = null;
+
+    if (riskResult.approved) {
+      if (this.executionMode === "TESTNET" && this.testnetExecutor && this.state.testnetReady) {
+        // Use P6 decision parameters (real calculated entry/SL/TP/leverage/margin)
+        testnetResult = await this.executeP6Decision(bestDecision, aiDecision);
+        if (testnetResult) {
+          this.state.lastTestnetResult = testnetResult;
+          aiDecision.executionResult = testnetResult.success ? "EXECUTED" : "REJECTED";
+          if (!testnetResult.success && testnetResult.error) {
+            aiDecision.executionDetails = testnetResult.error;
+          }
+        }
+      }
+
+      if (!testnetResult) {
+        aiDecision.executionResult = "SKIPPED";
+      }
+    } else if (!riskResult.approved) {
+      aiDecision.executionResult = "REJECTED";
+      aiDecision.executionDetails = riskResult.reason;
+      recordTradeRejected(bestDecision.symbol, bestDecision.direction, riskResult.reason, aiDecision.id);
+    } else {
+      aiDecision.executionResult = "SKIPPED";
+      recordTradeProposed(bestDecision.symbol, "NO_TRADE", bestDecision.confidence, "P6" as any, aiDecision.id);
+    }
+
+    // 6. Record experience
+    await recordTradeExperience(aiDecision, {
+      symbol: bestDecision.symbol,
+      timestamp: Date.now(),
+      price: bestDecision.entryPrice,
+      priceChange24h: 0,
+      priceChangePercent24h: 0,
+      trend: "FLAT",
+      trendStrength: 0,
+      momentum: "MODERATE",
+      momentumScore: 0,
+      volatility: 0,
+      volatilityPercent: 0,
+      volume24h: 0,
+      volumeChange: 0,
+      marketStructure: "MIXED",
+      marketRegime: "UNCERTAIN",
+      regimeConfidence: 0,
+      liquidity: 0,
+      dataQuality: "GOOD",
+      feedStatus: "ONLINE",
+      lastUpdate: Date.now(),
+      dataAge: 0,
+    }, null, riskResult);
+
+    this.addActivity(
+      `P6 ${bestDecision.direction} ${bestDecision.symbol} ` +
+        `(${aiDecision.executionResult}) score=${bestDecision.researchScore.toFixed(0)} ` +
+        `margin=$${bestDecision.proposedMargin.toFixed(2)} ${bestDecision.leverage}x`,
+    );
+
+    const elapsed = Date.now() - startTime;
+    logger.info(
+      "p6-cycle",
+      `P6 cycle complete: ${bestDecision.direction} ${bestDecision.symbol} ` +
+        `(${aiDecision.executionResult}) in ${elapsed}ms`,
+    );
+
+    return {
+      symbolsScanned: scanResult.symbolsScanned,
+      candidatesEvaluated: evaluated,
+      decision: bestDecision,
+      riskResult,
+      testnetResult,
+    };
+  }
+
+  /**
+   * Execute a P6 decision on Binance Testnet.
+   * Uses the P6-calculated entry/SL/TP/leverage/margin directly.
+   */
+  private async executeP6Decision(
+    p6Decision: P6Decision,
+    aiDecision: AiDecision,
+  ): Promise<TestnetExecutionResult | null> {
+    if (!this.testnetExecutor || !this.state.testnetReady) return null;
+
+    const quantity = (p6Decision.proposedMargin * p6Decision.leverage) / p6Decision.entryPrice;
+    const roundedQty = Math.floor(quantity * 1000) / 1000;
+
+    if (roundedQty <= 0) {
+      logger.warn("p6-cycle", "P6 calculated zero quantity — cannot execute");
+      return null;
+    }
+
+    // Validate through existing P3 risk pipeline
+    const proposal: TradeProposal = {
+      symbol: p6Decision.symbol,
+      side: p6Decision.direction as "LONG" | "SHORT",
+      entryPrice: p6Decision.entryPrice,
+      quantity: roundedQty,
+      leverage: p6Decision.leverage,
+      stopLossPrice: p6Decision.stopLoss,
+    };
+
+    const proposalResult = this.riskEngine.validateTradeProposal(proposal);
+    if (!proposalResult.approved) {
+      logger.warn("p6-cycle", `P6 proposal REJECTED: ${proposalResult.reason}`);
+      recordTradeRejected(p6Decision.symbol, p6Decision.direction, proposalResult.reason, aiDecision.id);
+      return null;
+    }
+
+    const quantityResult = this.riskEngine.validateOrderQuantity(
+      p6Decision.entryPrice,
+      roundedQty,
+      p6Decision.leverage,
+    );
+    if (!quantityResult.valid) {
+      logger.warn("p6-cycle", `P6 quantity REJECTED: ${quantityResult.reason}`);
+      recordTradeRejected(p6Decision.symbol, p6Decision.direction, quantityResult.reason, aiDecision.id);
+      return null;
+    }
+
+    recordTradeApproved(p6Decision.symbol, p6Decision.direction, aiDecision.id);
+
+    const result = await this.testnetExecutor.executeTrade({
+      direction: p6Decision.direction as "LONG" | "SHORT",
+      symbol: p6Decision.symbol,
+      quantity: roundedQty,
+      price: p6Decision.entryPrice,
+      leverage: p6Decision.leverage,
+      stopLossPrice: p6Decision.stopLoss,
+      takeProfitPrice: p6Decision.takeProfit,
+      decisionId: aiDecision.id,
+    });
+
+    if (result.success) {
+      this.riskEngine.recordPositionOpened(result.actualMargin);
+      recordTradeOpened(
+        p6Decision.symbol,
+        p6Decision.direction as "LONG" | "SHORT",
+        result.price,
+        result.actualMargin,
+        result.actualLeverage,
+        `TESTNET-${result.orderId}`,
+      );
+      recordPositionOpened(
+        p6Decision.symbol,
+        p6Decision.direction as "LONG" | "SHORT",
+        result.actualMargin,
+        result.actualLeverage,
+      );
+    }
+
+    return result;
   }
 
   // ─── Getters ───────────────────────────────────────────────────

@@ -510,6 +510,89 @@ export class BinanceTestnetClient {
     return exchangeInfo.symbols.find((s) => s.symbol === symbol) || null;
   }
 
+  // ─── Market Data (P6) ──────────────────────────────────────────
+
+  /**
+   * Get kline/candlestick data for a symbol.
+   */
+  async getKlines(
+    symbol: string,
+    interval: string = "1h",
+    limit = 100,
+  ): Promise<Array<{
+    openTime: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+    closeTime: number;
+    quoteVolume: number;
+    trades: number;
+  }>> {
+    const raw = await this.request<Array<[
+      number, string, string, string, string, string, number, string, number,
+    ]>>("GET", "/fapi/v1/klines", {
+      symbol,
+      interval,
+      limit: String(limit),
+    }, false);
+
+    return raw.map((c) => ({
+      openTime: c[0],
+      open: parseFloat(c[1]),
+      high: parseFloat(c[2]),
+      low: parseFloat(c[3]),
+      close: parseFloat(c[4]),
+      volume: parseFloat(c[5]),
+      closeTime: c[6],
+      quoteVolume: parseFloat(c[7]),
+      trades: c[8],
+    }));
+  }
+
+  /**
+   * Get 24h ticker stats for a symbol or all symbols.
+   */
+  async get24hTicker(symbol?: string): Promise<Array<{
+    symbol: string;
+    lastPrice: number;
+    priceChange: number;
+    priceChangePercent: number;
+    highPrice: number;
+    lowPrice: number;
+    volume: number;
+    quoteVolume: number;
+    trades: number;
+  }>> {
+    const params: Record<string, string> = {};
+    if (symbol) params["symbol"] = symbol;
+
+    const raw = await this.request<Array<{
+      symbol: string;
+      lastPrice: string;
+      priceChange: string;
+      priceChangePercent: string;
+      highPrice: string;
+      lowPrice: string;
+      volume: string;
+      quoteVolume: string;
+      trades: number;
+    }>>("GET", "/fapi/v1/ticker/24hr", params, false);
+
+    return raw.map((t) => ({
+      symbol: t.symbol,
+      lastPrice: parseFloat(t.lastPrice),
+      priceChange: parseFloat(t.priceChange),
+      priceChangePercent: parseFloat(t.priceChangePercent),
+      highPrice: parseFloat(t.highPrice),
+      lowPrice: parseFloat(t.lowPrice),
+      volume: parseFloat(t.volume),
+      quoteVolume: parseFloat(t.quoteVolume),
+      trades: t.trades,
+    }));
+  }
+
   // ─── Income (PnL) ───────────────────────────────────────────────
 
   async getIncomeHistory(
