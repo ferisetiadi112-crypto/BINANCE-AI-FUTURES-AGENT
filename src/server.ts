@@ -3,6 +3,7 @@ import "./lib/error-capture";
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { startTradingRuntime } from "./backend/trading/runtime";
+import { initializeDatabase } from "./backend/database";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -81,6 +82,11 @@ export default {
         const tradingEnabled = detectTradingEnabled();
         console.log(`[server] Starting runtime: mode=${mode}, tradingEnabled=${tradingEnabled}`);
         try {
+          // P7D-3-FIX-CONNECTION-DIAGNOSTIC-2: Initialize database BEFORE runtime
+          // This ensures PostgreSQL migrations (accounts, positions, orders, etc.)
+          // are created before any code tries to query them.
+          await initializeDatabase();
+          console.log(`[server] Database initialized`);
           await startTradingRuntime(mode, tradingEnabled);
           console.log(`[server] Runtime started successfully: mode=${mode}`);
         } catch (err) {
