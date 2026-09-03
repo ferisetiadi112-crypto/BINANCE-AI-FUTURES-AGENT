@@ -174,11 +174,13 @@ export function runBacktest(
 
   // Initialize engines
   const riskEngine = new RiskEngine({
-    initialCapital: config.initialCapital,
-    dailyProfitCap: config.riskConfig.dailyProfitCap,
+    aiAllocationLimit: config.initialCapital,
+    sessionProfitTarget: config.riskConfig.dailyProfitCap,
+    sessionHardCap: config.riskConfig.dailyProfitCap * 4,
+    maxLossPerTrade: 1.0,
     dailyLossLimit: config.riskConfig.dailyLossLimit,
     maxLeverage: config.riskConfig.maxLeverage,
-    maxExposurePercent: config.riskConfig.maxExposurePercent,
+    maxOpenPositions: 1,
   });
 
   const feeRate = config.feeRate;

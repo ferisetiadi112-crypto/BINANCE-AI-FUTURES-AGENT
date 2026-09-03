@@ -170,11 +170,13 @@ describe("Risk Engine — Wallet Balance for Testnet (Phase 9E)", () => {
 
   beforeEach(() => {
     engine = new RiskEngine({
-      initialCapital: 5.0,
-      dailyProfitCap: 0.50,
-      dailyLossLimit: 0.50,
-      maxLeverage: 10,
-      maxExposurePercent: 80,
+      aiAllocationLimit: 10.0,
+      sessionProfitTarget: 0.50,
+      sessionHardCap: 2.00,
+      maxLossPerTrade: 1.00,
+      dailyLossLimit: 2.00,
+      maxLeverage: 20,
+      maxOpenPositions: 1,
       minWalletBalance: 0.50,
     });
   });
@@ -204,7 +206,7 @@ describe("Risk Engine — Wallet Balance for Testnet (Phase 9E)", () => {
 
   it("rejects trade when daily loss limit exceeded", () => {
     engine.setWalletBalance(5.0);
-    engine.updateDailyPnl(-0.55); // Exceeds -$0.50 limit
+    engine.updateDailyPnl(-2.5); // Exceeds -$2.00 limit
     const result = engine.check(mockDecision, mockMarketState, {
       symbol: "BTCUSDT",
       side: "FLAT",
@@ -213,9 +215,9 @@ describe("Risk Engine — Wallet Balance for Testnet (Phase 9E)", () => {
     expect(result.approved).toBe(false);
   });
 
-  it("rejects trade when daily profit cap reached", () => {
+  it("rejects trade when session hard cap reached", () => {
     engine.setWalletBalance(5.0);
-    engine.updateDailyPnl(0.55); // Exceeds +$0.50 cap
+    engine.updateDailyPnl(2.5); // Exceeds +$2.00 session cap
     const result = engine.check(mockDecision, mockMarketState, {
       symbol: "BTCUSDT",
       side: "FLAT",

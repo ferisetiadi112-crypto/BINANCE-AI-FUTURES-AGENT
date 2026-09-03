@@ -240,7 +240,7 @@ describe("Trading Orchestrator", () => {
     });
 
     it("Risk Engine rejection blocks Paper Trading execution", async () => {
-      orchestrator.getRiskEngine().updateDailyPnl(-0.55);
+      orchestrator.getRiskEngine().updateDailyPnl(-2.5);
       expect(orchestrator.getRiskEngine().isSystemLocked()).toBe(true);
 
       const result = await orchestrator.processMarketUpdate(trendingUpState);
@@ -358,7 +358,7 @@ describe("Trading Orchestrator", () => {
       });
 
       // Lock the risk engine
-      orchestrator.getRiskEngine().updateDailyPnl(-0.55);
+      orchestrator.getRiskEngine().updateDailyPnl(-2.5);
 
       const result = await orchestrator.processMarketUpdateLLM(trendingUpState);
 

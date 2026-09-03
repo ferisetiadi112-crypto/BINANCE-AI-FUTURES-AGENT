@@ -83,7 +83,7 @@ describe("Database Schema", () => {
 describe("Risk State Persistence", () => {
   it("loads default risk state when nothing is persisted", async () => {
     // Reset to defaults
-    await saveRiskState({ dailyPnl: 0, isLocked: false, lockReason: "" });
+    await saveRiskState({ dailyPnl: 0, sessionPnl: 0, isLocked: false, lockReason: "", cooldownEndsAt: null, hardCapReached: false, openPositionMargin: 0, openPositionCount: 0 });
     const state = await loadRiskState();
     expect(state.dailyPnl).toBe(0);
     expect(state.isLocked).toBe(false);
@@ -110,15 +110,23 @@ describe("Risk State Persistence", () => {
   it("saves and loads full risk state (round-trip)", async () => {
     await saveRiskState({
       dailyPnl: -0.30,
+      sessionPnl: 0.20,
       isLocked: true,
       lockReason: "Daily loss limit",
+      cooldownEndsAt: null,
+      hardCapReached: false,
+      openPositionMargin: 5.0,
+      openPositionCount: 1,
     });
     const state = await loadRiskState();
     expect(state.dailyPnl).toBe(-0.30);
+    expect(state.sessionPnl).toBe(0.20);
     expect(state.isLocked).toBe(true);
     expect(state.lockReason).toBe("Daily loss limit");
+    expect(state.openPositionMargin).toBe(5.0);
+    expect(state.openPositionCount).toBe(1);
     // Clean up
-    await saveRiskState({ dailyPnl: 0, isLocked: false, lockReason: "" });
+    await saveRiskState({ dailyPnl: 0, sessionPnl: 0, isLocked: false, lockReason: "", cooldownEndsAt: null, hardCapReached: false, openPositionMargin: 0, openPositionCount: 0 });
   });
 
   it("overwrites previous risk state", async () => {

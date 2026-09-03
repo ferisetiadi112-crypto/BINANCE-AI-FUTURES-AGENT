@@ -56,9 +56,13 @@ describe("Risk Engine", () => {
 
   beforeEach(() => {
     engine = new RiskEngine({
-      initialCapital: 5.0,
-      dailyProfitCap: 0.50,
-      dailyLossLimit: 0.50,
+      aiAllocationLimit: 10.0,
+      sessionProfitTarget: 0.50,
+      sessionHardCap: 2.00,
+      maxLossPerTrade: 1.00,
+      dailyLossLimit: 2.00,
+      maxLeverage: 20,
+      maxOpenPositions: 1,
     });
   });
 
@@ -129,8 +133,8 @@ describe("Risk Engine", () => {
 
   describe("daily limits", () => {
     it("locks on daily loss limit", () => {
-      engine.updateDailyPnl(-0.30);
-      engine.updateDailyPnl(-0.25); // Total: -0.55, exceeds limit
+      engine.updateDailyPnl(-1.0);
+      engine.updateDailyPnl(-1.5); // Total: -2.50, exceeds -$2.00 limit
 
       const result = engine.check(
         mockDecision,
@@ -141,9 +145,8 @@ describe("Risk Engine", () => {
       expect(engine.isSystemLocked()).toBe(true);
     });
 
-    it("locks on daily profit cap", () => {
-      engine.updateDailyPnl(0.30);
-      engine.updateDailyPnl(0.25); // Total: 0.55, exceeds cap
+    it("locks on session hard profit cap", () => {
+      engine.updateDailyPnl(2.5); // Total: $2.50 session, exceeds $2.00 cap
 
       const result = engine.check(
         mockDecision,
@@ -232,8 +235,8 @@ describe("Risk Engine", () => {
       engine.updateDailyPnl(0.10);
       const stats = engine.getDailyStats();
       expect(stats.pnl).toBe(0.10);
-      expect(stats.profitCap).toBe(0.50);
-      expect(stats.lossLimit).toBe(0.50);
+      expect(stats.dailyLossLimit).toBe(2.00);
+      expect(stats.sessionHardCap).toBe(2.00);
     });
   });
 });

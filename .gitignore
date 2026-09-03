@@ -38,3 +38,6 @@ data/
 *.njsproj
 *.sln
 *.sw?
+-e 
+# Build artifacts
+tsconfig.tsbuildinfo

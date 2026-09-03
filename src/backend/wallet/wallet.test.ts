@@ -249,11 +249,13 @@ describe("Risk Engine — Wallet Balance Check (Phase 9D)", () => {
 
   beforeEach(() => {
     engine = new RiskEngine({
-      initialCapital: 5.0,
-      dailyProfitCap: 0.50,
-      dailyLossLimit: 0.50,
-      maxLeverage: 10,
-      maxExposurePercent: 80,
+      aiAllocationLimit: 10.0,
+      sessionProfitTarget: 0.50,
+      sessionHardCap: 2.00,
+      maxLossPerTrade: 1.00,
+      dailyLossLimit: 2.00,
+      maxLeverage: 20,
+      maxOpenPositions: 1,
       minWalletBalance: 0.50,
     });
   });
@@ -334,8 +336,8 @@ describe("Risk Engine — Wallet Balance Check (Phase 9D)", () => {
     expect(engine.getWalletBalance()).toBe(3.14);
   });
 
-  it("has default wallet balance equal to initial capital", () => {
-    expect(engine.getWalletBalance()).toBe(5.0);
+  it("has default wallet balance equal to aiAllocationLimit", () => {
+    expect(engine.getWalletBalance()).toBe(10.0);
   });
 
   it("wallet check is always present in checks array", () => {
@@ -354,7 +356,7 @@ describe("Risk Engine — Wallet Balance Check (Phase 9D)", () => {
 
   it("blocks trade when daily loss AND insufficient funds both apply", () => {
     engine.setWalletBalance(0.2);
-    engine.updateDailyPnl(-0.55); // Triggers daily loss lock
+    engine.updateDailyPnl(-2.5); // Triggers daily loss lock (-$2.00 limit)
 
     const result = engine.check(mockDecision, mockMarketState, {
       symbol: "BTCUSDT",

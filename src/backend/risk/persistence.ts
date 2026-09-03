@@ -4,16 +4,25 @@
  * Persists critical Risk Engine state to the database.
  * State survives server restarts and cold starts.
  *
+ * M-1 FAIL CLOSED: If persistent risk state cannot be loaded reliably,
+ * TRADING MUST BE LOCKED. Risk state uncertainty = NO TRADE.
+ *
  * Persisted values:
  * - daily_pnl: Current day's realized PnL
+ * - session_pnl: Current session realized PnL
  * - is_locked: Whether the system is locked
  * - lock_reason: Reason for the lock
- *
- * On startup, the Risk Engine loads persisted state from the database.
- * On state changes, the Risk Engine saves to the database.
+ * - cooldown_ends_at: Cooldown expiry timestamp (ms)
+ * - hard_cap_reached: Whether hard profit cap was reached
+ * - open_position_margin: Total margin allocated to open positions
+ * - open_position_count: Number of open positions
  */
 
-import { dbQueryOne, dbExecute, isPostgresConfigured } from "../database/adapter";
+import {
+  dbQueryOne,
+  dbExecute,
+  isPostgresConfigured,
+} from "../database/adapter";
 import { getDatabase } from "../database";
 import { logger } from "../logger";
 
@@ -21,74 +30,129 @@ import { logger } from "../logger";
 
 export type PersistedRiskState = {
   dailyPnl: number;
+  sessionPnl: number;
   isLocked: boolean;
   lockReason: string;
+  cooldownEndsAt: number | null;
+  hardCapReached: boolean;
+  openPositionMargin: number;
+  openPositionCount: number;
+};
+
+/** State returned when DB is unavailable — fail closed */
+const FAIL_CLOSED_STATE: PersistedRiskState = {
+  dailyPnl: 0,
+  sessionPnl: 0,
+  isLocked: true,
+  lockReason: "Risk state unavailable — fail closed (database error)",
+  cooldownEndsAt: null,
+  hardCapReached: false,
+  openPositionMargin: 0,
+  openPositionCount: 0,
 };
 
 // ─── Internal Helpers ───────────────────────────────────────────────
 
-/**
- * Execute a query that returns a single value.
- * Uses PostgreSQL (async) in production, SQLite (sync) in tests.
- * NOTE: In tests, this writes to/reads from the file-based SQLite at data/agent.db.
- * Tests should use save/load directly and verify the round-trip.
- */
 async function queryValue(sql: string): Promise<string | undefined> {
   if (isPostgresConfigured()) {
     const row = await dbQueryOne(sql);
     return row?.["value"] as string | undefined;
   }
-  // SQLite path (tests/dev)
   const db = getDatabase();
-  const row = db.prepare(sql.replace(/\$1/g, "?")).get() as { value: string } | undefined;
+  const row = db
+    .prepare(sql.replace(/\$1/g, "?"))
+    .get() as { value: string } | undefined;
   return row?.value;
 }
 
 // ─── Persistence Functions ───────────────────────────────────────────
 
 /**
- * Load persisted risk state from the database.
- * Returns default values if no state is persisted.
+ * M-1: Load persisted risk state from the database.
+ * Returns FAIL-CLOSED state if DB is unavailable or query fails.
+ * This ensures trading is locked when state is uncertain.
  */
 export async function loadRiskState(): Promise<PersistedRiskState> {
   try {
-    const dailyPnl = await queryValue("SELECT value FROM risk_state WHERE key = 'daily_pnl'");
-    const isLocked = await queryValue("SELECT value FROM risk_state WHERE key = 'is_locked'");
-    const lockReason = await queryValue("SELECT value FROM risk_state WHERE key = 'lock_reason'");
+    const dailyPnl = await queryValue(
+      "SELECT value FROM risk_state WHERE key = 'daily_pnl'",
+    );
+    const sessionPnl = await queryValue(
+      "SELECT value FROM risk_state WHERE key = 'session_pnl'",
+    );
+    const isLocked = await queryValue(
+      "SELECT value FROM risk_state WHERE key = 'is_locked'",
+    );
+    const lockReason = await queryValue(
+      "SELECT value FROM risk_state WHERE key = 'lock_reason'",
+    );
+    const cooldownEndsAt = await queryValue(
+      "SELECT value FROM risk_state WHERE key = 'cooldown_ends_at'",
+    );
+    const hardCapReached = await queryValue(
+      "SELECT value FROM risk_state WHERE key = 'hard_cap_reached'",
+    );
+    const openPositionMargin = await queryValue(
+      "SELECT value FROM risk_state WHERE key = 'open_position_margin'",
+    );
+    const openPositionCount = await queryValue(
+      "SELECT value FROM risk_state WHERE key = 'open_position_count'",
+    );
+
+    // Parse cooldown — if expiry is in the future, keep it active
+    const cooldownMs = cooldownEndsAt ? parseInt(cooldownEndsAt, 10) : null;
+    const activeCooldown =
+      cooldownMs !== null && cooldownMs > Date.now() ? cooldownMs : null;
 
     return {
       dailyPnl: parseFloat(dailyPnl || "0") || 0,
-      isLocked: isLocked === "true",
-      lockReason: lockReason || "",
+      sessionPnl: parseFloat(sessionPnl || "0") || 0,
+      isLocked: isLocked === "true" || activeCooldown !== null,
+      lockReason: lockReason || (activeCooldown !== null ? "Cooldown active from previous session" : ""),
+      cooldownEndsAt: activeCooldown,
+      hardCapReached: hardCapReached === "true",
+      openPositionMargin: parseFloat(openPositionMargin || "0") || 0,
+      openPositionCount: parseInt(openPositionCount || "0", 10) || 0,
     };
   } catch (error) {
-    logger.warn("risk-persistence", `Failed to load risk state: ${error}`);
-    return { dailyPnl: 0, isLocked: false, lockReason: "" };
+    // M-1: FAIL CLOSED — database failure means locked
+    logger.warn(
+      "risk-persistence",
+      `Failed to load risk state — FAIL CLOSED: ${error}`,
+    );
+    return { ...FAIL_CLOSED_STATE };
   }
 }
 
 /**
- * Save risk state to the database.
- * Uses UPSERT to handle both insert and update.
+ * Save the complete risk state to the database.
+ * Uses UPSERT for each key.
  */
-export async function saveRiskState(state: PersistedRiskState): Promise<void> {
+export async function saveRiskState(
+  state: PersistedRiskState,
+): Promise<void> {
   try {
     if (isPostgresConfigured()) {
-      await dbExecute(
-        `INSERT INTO risk_state (key, value, updated_at) VALUES ('daily_pnl', $1, NOW()::TEXT)
-         ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()::TEXT`,
-        [String(state.dailyPnl)]
-      );
-      await dbExecute(
-        `INSERT INTO risk_state (key, value, updated_at) VALUES ('is_locked', $1, NOW()::TEXT)
-         ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()::TEXT`,
-        [String(state.isLocked)]
-      );
-      await dbExecute(
-        `INSERT INTO risk_state (key, value, updated_at) VALUES ('lock_reason', $1, NOW()::TEXT)
-         ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()::TEXT`,
-        [state.lockReason]
-      );
+      const entries: [string, string][] = [
+        ["daily_pnl", String(state.dailyPnl)],
+        ["session_pnl", String(state.sessionPnl)],
+        ["is_locked", String(state.isLocked)],
+        ["lock_reason", state.lockReason],
+        [
+          "cooldown_ends_at",
+          state.cooldownEndsAt !== null ? String(state.cooldownEndsAt) : "",
+        ],
+        ["hard_cap_reached", String(state.hardCapReached)],
+        ["open_position_margin", String(state.openPositionMargin)],
+        ["open_position_count", String(state.openPositionCount)],
+      ];
+      for (const [key, value] of entries) {
+        await dbExecute(
+          `INSERT INTO risk_state (key, value, updated_at) VALUES ($1, $2, NOW()::TEXT)
+           ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()::TEXT`,
+          [key, value],
+        );
+      }
     } else {
       const db = getDatabase();
       const upsert = db.prepare(`
@@ -96,12 +160,28 @@ export async function saveRiskState(state: PersistedRiskState): Promise<void> {
         VALUES (?, ?, datetime('now'))
         ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = datetime('now')
       `);
-      upsert.run("daily_pnl", String(state.dailyPnl), String(state.dailyPnl));
-      upsert.run("is_locked", String(state.isLocked), String(state.isLocked));
-      upsert.run("lock_reason", state.lockReason, state.lockReason);
+      const entries: [string, string][] = [
+        ["daily_pnl", String(state.dailyPnl)],
+        ["session_pnl", String(state.sessionPnl)],
+        ["is_locked", String(state.isLocked)],
+        ["lock_reason", state.lockReason],
+        [
+          "cooldown_ends_at",
+          state.cooldownEndsAt !== null ? String(state.cooldownEndsAt) : "",
+        ],
+        ["hard_cap_reached", String(state.hardCapReached)],
+        ["open_position_margin", String(state.openPositionMargin)],
+        ["open_position_count", String(state.openPositionCount)],
+      ];
+      for (const [key, value] of entries) {
+        upsert.run(key, value, value);
+      }
     }
   } catch (error) {
-    logger.error("risk-persistence", `Failed to save risk state: ${error}`);
+    logger.error(
+      "risk-persistence",
+      `Failed to save risk state: ${error}`,
+    );
   }
 }
 
@@ -114,7 +194,7 @@ export async function saveDailyPnl(pnl: number): Promise<void> {
       await dbExecute(
         `INSERT INTO risk_state (key, value, updated_at) VALUES ('daily_pnl', $1, NOW()::TEXT)
          ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()::TEXT`,
-        [String(pnl)]
+        [String(pnl)],
       );
     } else {
       const db = getDatabase();
@@ -132,18 +212,21 @@ export async function saveDailyPnl(pnl: number): Promise<void> {
 /**
  * Save only the lock state to the database.
  */
-export async function saveLockState(isLocked: boolean, reason: string): Promise<void> {
+export async function saveLockState(
+  isLocked: boolean,
+  reason: string,
+): Promise<void> {
   try {
     if (isPostgresConfigured()) {
       await dbExecute(
         `INSERT INTO risk_state (key, value, updated_at) VALUES ('is_locked', $1, NOW()::TEXT)
          ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()::TEXT`,
-        [String(isLocked)]
+        [String(isLocked)],
       );
       await dbExecute(
         `INSERT INTO risk_state (key, value, updated_at) VALUES ('lock_reason', $1, NOW()::TEXT)
          ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()::TEXT`,
-        [reason]
+        [reason],
       );
     } else {
       const db = getDatabase();

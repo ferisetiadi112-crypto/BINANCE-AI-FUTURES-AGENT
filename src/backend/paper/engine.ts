@@ -238,6 +238,10 @@ export class PaperTradingEngine {
     return [...this.orders];
   }
 
+  getConfig(): PaperConfig {
+    return { ...this.config };
+  }
+
   getStats() {
     const wins = this.trades.filter(t => t.pnl > 0);
     const losses = this.trades.filter(t => t.pnl <= 0);
