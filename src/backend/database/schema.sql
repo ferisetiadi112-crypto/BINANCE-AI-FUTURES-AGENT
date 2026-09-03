@@ -292,3 +292,29 @@ CREATE TABLE IF NOT EXISTS risk_state (
 INSERT OR IGNORE INTO risk_state (key, value) VALUES ('daily_pnl', '0');
 INSERT OR IGNORE INTO risk_state (key, value) VALUES ('is_locked', 'false');
 INSERT OR IGNORE INTO risk_state (key, value) VALUES ('lock_reason', '');
+
+-- ─── Journal Events (P7D-4.1) ────────────────────────────────────
+-- Persistent journal for AI activity logbook.
+-- Every real system event is written here for persistence across restarts.
+
+CREATE TABLE IF NOT EXISTS journal_events (
+  id TEXT PRIMARY KEY,
+  timestamp INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  importance TEXT NOT NULL,
+  symbol TEXT,
+  message TEXT NOT NULL,
+  position_data TEXT,
+  risk_decision_data TEXT,
+  reasoning TEXT,
+  pnl REAL,
+  action TEXT,
+  trade_id TEXT,
+  decision_id TEXT,
+  details_data TEXT,
+  ai_state_data TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_journal_events_timestamp ON journal_events(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_events_type ON journal_events(event_type, timestamp DESC);

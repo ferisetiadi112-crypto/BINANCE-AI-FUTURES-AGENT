@@ -19,6 +19,13 @@
  */
 
 import { logger } from "../logger";
+import {
+  appendJournalEvent,
+  getRecentJournalEventsFromDB,
+  getJournalEventById,
+  countJournalEvents,
+  getJournalEventsInRange as getJournalEventsInRangeDB,
+} from "./repository";
 
 // ─── Journal Event Types ─────────────────────────────────────────────
 
@@ -130,6 +137,11 @@ export function recordJournalEvent(
     "journal",
     `[${record.eventType}] ${record.message}${record.symbol ? ` (${record.symbol})` : ""}`,
   );
+
+  // Persist to database (fire-and-forget, non-blocking)
+  appendJournalEvent(record).catch(() => {
+    // Error already logged inside appendJournalEvent
+  });
 
   return record;
 }
@@ -520,6 +532,7 @@ export function recordStartupReconciliation(
 
 /**
  * Get all journal events (bounded buffer).
+ * NOTE: For persistent read, use getRecentJournalEventsFromDB() instead.
  */
 export function getJournalEvents(): JournalEvent[] {
   return [..._events];
@@ -535,14 +548,28 @@ export function getJournalEventsByType(
 }
 
 /**
- * Get recent events (last N).
+ * Get recent events (last N) from in-memory buffer.
+ * Kept for backward compatibility. AI Logbook should use getRecentJournalEventsAsync().
  */
 export function getRecentJournalEvents(count: number): JournalEvent[] {
   return _events.slice(-count);
 }
 
 /**
- * Get events in a time range.
+ * Get recent events from PostgreSQL (persistent source of truth).
+ * Falls back to in-memory buffer if DB read fails.
+ */
+export async function getRecentJournalEventsAsync(
+  count: number = 500
+): Promise<JournalEvent[]> {
+  const dbEvents = await getRecentJournalEventsFromDB(count);
+  if (dbEvents.length > 0) return dbEvents;
+  // Fallback to in-memory if DB is empty or failed
+  return _events.slice(-count);
+}
+
+/**
+ * Get events in a time range (in-memory).
  */
 export function getJournalEventsInRange(
   from: number,
@@ -552,9 +579,23 @@ export function getJournalEventsInRange(
 }
 
 /**
+ * Get events in a time range from database.
+ */
+export async function getJournalEventsInRangeAsync(
+  from: number,
+  to: number
+): Promise<JournalEvent[]> {
+  return getJournalEventsInRangeDB(from, to);
+}
+
+/**
  * Clear all journal events (for testing).
  */
 export function clearJournal(): void {
   _events = [];
   _eventCounter = 0;
 }
+
+// ─── Async Query Exports ───────────────────────────────────────────
+
+export { getJournalEventById, countJournalEvents } from "./repository";

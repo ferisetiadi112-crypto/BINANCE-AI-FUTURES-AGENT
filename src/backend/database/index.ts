@@ -32,7 +32,7 @@ import {
 } from "./adapter";
 import { logger } from "../logger";
 
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 
 /**
  * Initialize the database.
@@ -335,6 +335,27 @@ async function runMigrations(): Promise<void> {
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT (NOW()::TEXT)
     )`,
+    // Journal persistence (P7D-4.1)
+    `CREATE TABLE IF NOT EXISTS journal_events (
+      id TEXT PRIMARY KEY,
+      timestamp INTEGER NOT NULL,
+      event_type TEXT NOT NULL,
+      importance TEXT NOT NULL,
+      symbol TEXT,
+      message TEXT NOT NULL,
+      position_data TEXT,
+      risk_decision_data TEXT,
+      reasoning TEXT,
+      pnl REAL,
+      action TEXT,
+      trade_id TEXT,
+      decision_id TEXT,
+      details_data TEXT,
+      ai_state_data TEXT,
+      created_at TEXT NOT NULL DEFAULT (NOW()::TEXT)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_journal_events_timestamp ON journal_events(timestamp DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_journal_events_type ON journal_events(event_type, timestamp DESC)`,
   ];
 
   for (const stmt of statements) {
