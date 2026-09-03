@@ -72,7 +72,7 @@ describe("P7B — RiskEngine effective allocation enforcement", () => {
   let engine: RiskEngine;
 
   beforeEach(() => {
-    engine = new RiskEngine({
+    engine = new RiskEngine({ tradingEnabled: true,
       aiAllocationLimit: 10.0,
       maxLossPerTrade: 1.0,
       maxLeverage: 20,
@@ -319,7 +319,7 @@ describe("P7B — execution boundary enforcement", () => {
   let engine: RiskEngine;
 
   beforeEach(() => {
-    engine = new RiskEngine({
+    engine = new RiskEngine({ tradingEnabled: true,
       aiAllocationLimit: 10.0,
       maxLossPerTrade: 1.0,
       maxLeverage: 20,
@@ -392,7 +392,7 @@ describe("P7B — P6 cycle allocation correctness", () => {
     //   P6DecisionEngine receives $10 (same as before)
     //
     // This test verifies the method exists and returns the correct value.
-    const engine = new RiskEngine({ aiAllocationLimit: 10 });
+    const engine = new RiskEngine({ tradingEnabled: true, aiAllocationLimit: 10 });
 
     // Before setEffectiveAllocationLimit, defaults to $10
     expect(engine.getEffectiveAllocationLimit()).toBe(10);

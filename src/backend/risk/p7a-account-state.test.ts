@@ -26,7 +26,7 @@ describe("P7A — Risk Engine wallet balance check uses effective allocation", (
   let engine: RiskEngine;
 
   beforeEach(() => {
-    engine = new RiskEngine({
+    engine = new RiskEngine({ tradingEnabled: true,
       aiAllocationLimit: 10.0,
       minWalletBalance: 0.50,
     });
@@ -193,7 +193,7 @@ describe("P7A — checkAllocationWithinEffectiveLimit", () => {
 
 describe("P7A — Risk Engine capital check uses effective allocation", () => {
   it("rejects trade when effective allocation = 0 even if walletBalance is high", () => {
-    const engine = new RiskEngine({ aiAllocationLimit: 10.0 });
+    const engine = new RiskEngine({ tradingEnabled: true, aiAllocationLimit: 10.0 });
     engine.setWalletBalance(1000); // sandbox wallet is high
     engine.setEffectiveAllocationLimit(0); // but real Futures balance is 0
 
@@ -204,7 +204,7 @@ describe("P7A — Risk Engine capital check uses effective allocation", () => {
   });
 
   it("allows trade when effective allocation = 5 and margin fits", () => {
-    const engine = new RiskEngine({ aiAllocationLimit: 10.0 });
+    const engine = new RiskEngine({ tradingEnabled: true, aiAllocationLimit: 10.0 });
     engine.setEffectiveAllocationLimit(5.0);
 
     // margin = (65000 * 0.00005) / 5 = $0.65 — fits within $5 effective
@@ -213,7 +213,7 @@ describe("P7A — Risk Engine capital check uses effective allocation", () => {
   });
 
   it("rejects when effective allocation = 2 and margin = $3", () => {
-    const engine = new RiskEngine({ aiAllocationLimit: 10.0 });
+    const engine = new RiskEngine({ tradingEnabled: true, aiAllocationLimit: 10.0 });
     engine.setEffectiveAllocationLimit(2.0);
 
     // margin = (65000 * 0.00015) / 5 = $1.95 — within $2
@@ -252,7 +252,7 @@ describe("P7A — No wallet-transfer in trading path", () => {
 
 describe("P7A — Fail closed when Binance account state unavailable", () => {
   it("effective allocation = 0 → validateOrderQuantity rejects", () => {
-    const engine = new RiskEngine({ aiAllocationLimit: 10.0 });
+    const engine = new RiskEngine({ tradingEnabled: true, aiAllocationLimit: 10.0 });
     engine.setEffectiveAllocationLimit(0); // Binance unavailable → 0
 
     const result = engine.validateOrderQuantity(65000, 0.001, 5);
@@ -261,7 +261,7 @@ describe("P7A — Fail closed when Binance account state unavailable", () => {
   });
 
   it("effective allocation = 0 → trade proposal rejects (capital allocation check)", () => {
-    const engine = new RiskEngine({ aiAllocationLimit: 10.0 });
+    const engine = new RiskEngine({ tradingEnabled: true, aiAllocationLimit: 10.0 });
     engine.setEffectiveAllocationLimit(0); // Binance unavailable → 0
 
     const proposal = {
@@ -324,12 +324,12 @@ describe("P7A — No mock/dummy data in production account state path", () => {
 
 describe("P7A — Scope compliance", () => {
   it("risk engine aiAllocationLimit remains $10", () => {
-    const engine = new RiskEngine();
+    const engine = new RiskEngine({ tradingEnabled: true });
     expect(engine.getAiAllocationLimit()).toBe(10.0);
   });
 
   it("risk engine maxLeverage remains 20", () => {
-    const engine = new RiskEngine();
+    const engine = new RiskEngine({ tradingEnabled: true });
     expect(engine.getMaxLeverage()).toBe(20);
   });
 

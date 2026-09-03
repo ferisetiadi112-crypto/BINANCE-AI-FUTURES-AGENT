@@ -11,6 +11,29 @@ type ServerEntry = {
 // Activate trading runtime on server boot (singleton — safe to call once)
 let runtimeStarted = false;
 
+/**
+ * Detect execution mode from environment.
+ * TESTNET when both BINANCE_TESTNET_API_KEY and BINANCE_TESTNET_SECRET are set.
+ * PAPER otherwise.
+ */
+function detectExecutionMode(): "TESTNET" | "PAPER" {
+  const apiKey = process.env["BINANCE_TESTNET_API_KEY"];
+  const apiSecret = process.env["BINANCE_TESTNET_SECRET"];
+  if (apiKey && apiSecret) {
+    return "TESTNET";
+  }
+  return "PAPER";
+}
+
+/**
+ * Detect trading enabled state from environment.
+ * P7D-2B: Only enable trading when TRADING_ENABLED=true is explicitly set.
+ * Default is false (trading disabled) for read-only verification phase.
+ */
+function detectTradingEnabled(): boolean {
+  return process.env["TRADING_ENABLED"] === "true";
+}
+
 let serverEntryPromise: Promise<ServerEntry> | undefined;
 
 async function getServerEntry(): Promise<ServerEntry> {
@@ -54,7 +77,9 @@ export default {
       // Start trading runtime on first request (singleton, idempotent)
       if (!runtimeStarted) {
         runtimeStarted = true;
-        startTradingRuntime();
+        const mode = detectExecutionMode();
+        const tradingEnabled = detectTradingEnabled();
+        startTradingRuntime(mode, tradingEnabled);
       }
 
       const handler = await getServerEntry();

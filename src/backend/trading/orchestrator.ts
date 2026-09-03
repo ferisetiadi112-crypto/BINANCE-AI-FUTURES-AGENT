@@ -122,7 +122,7 @@ export class TradingOrchestrator {
   private executionMode: ExecutionMode;
   private reconciliationInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(executionMode: ExecutionMode = "PAPER") {
+  constructor(executionMode: ExecutionMode = "PAPER", tradingEnabled = false) {
     this.executionMode = executionMode;
 
     this.riskEngine = new RiskEngine({
@@ -137,6 +137,7 @@ export class TradingOrchestrator {
       requireGoodDataQuality: true,
       minWalletBalance: 0.50,
       cooldownDurationMs: 12 * 60 * 60 * 1000,
+      tradingEnabled, // P7D-2B: master kill-switch, default OFF
     });
 
     this.paperEngine = new PaperTradingEngine({

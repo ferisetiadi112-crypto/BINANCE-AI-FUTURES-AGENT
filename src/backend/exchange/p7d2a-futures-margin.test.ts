@@ -44,7 +44,7 @@ function makeRiskEngine(overrides: {
       name: "wallet_balance" as const,
       passed: state.effectiveAllocationLimit > 0,
       message: state.effectiveAllocationLimit > 0
-        ? `Effective allocation: $${state.effectiveAllocationLimit}`
+        ? `Effective allocation: $${state.effectiveAllocationLimit.toFixed(2)}`
         : "Effective allocation is $0.00",
     }),
     validateTradeProposal: (p: { leverage: number; entryPrice: number; quantity: number; stopLossPrice: number; side: string }) => {

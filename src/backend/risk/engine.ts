@@ -51,6 +51,8 @@ export type RiskConfig = {
   minWalletBalance: number;
   /** Cooldown duration after session profit target (ms) — 12 hours */
   cooldownDurationMs: number;
+  /** Master trading kill-switch. When false, all trade proposals are REJECTED regardless of other checks. */
+  tradingEnabled: boolean;
 };
 
 const DEFAULT_RISK_CONFIG: RiskConfig = {
@@ -65,6 +67,7 @@ const DEFAULT_RISK_CONFIG: RiskConfig = {
   requireGoodDataQuality: true,
   minWalletBalance: 0.50,
   cooldownDurationMs: 12 * 60 * 60 * 1000, // 12 hours
+  tradingEnabled: false, // Fail-safe: trading disabled by default
 };
 
 // ─── Risk Engine ──────────────────────────────────────────────────────
@@ -168,6 +171,24 @@ export class RiskEngine {
 
   getMaxLeverage(): number {
     return this.config.maxLeverage;
+  }
+
+  // --- Trading Enabled Flag ---
+
+  /**
+   * P7D-2B: Master trading kill-switch.
+   * When false, validateTradeProposal() rejects ALL proposals regardless of other checks.
+   */
+  isTradingEnabled(): boolean {
+    return this.config.tradingEnabled;
+  }
+
+  setTradingEnabled(enabled: boolean): void {
+    this.config.tradingEnabled = enabled;
+    logger.info(
+      "risk-engine",
+      `Trading ${enabled ? "ENABLED" : "DISABLED"} via setTradingEnabled()`,
+    );
   }
 
   // ─── Session State ─────────────────────────────────────────────
@@ -362,6 +383,27 @@ export class RiskEngine {
     const checks: Array<{ name: string; passed: boolean; message: string }> =
       [];
     let approved = true;
+
+    // P7D-2B: Master trading kill-switch check
+    if (!this.config.tradingEnabled) {
+      checks.push({
+        name: "trading_enabled",
+        passed: false,
+        message: "Trading is DISABLED (tradingEnabled=false). All proposals rejected.",
+      });
+      logger.warn(
+        "risk-engine",
+        "Trade proposal REJECTED: trading disabled (tradingEnabled=false)",
+      );
+      return {
+        approved: false,
+        reason: "Trading is DISABLED (tradingEnabled=false). All proposals rejected.",
+        worstCaseLoss: 0,
+        proposedMargin: 0,
+        totalAllocated: this.openPositionMargin,
+        checks,
+      };
+    }
 
     // 1. Validate leverage (M-2)
     const leverageCheck = this.checkLeverage(proposal.leverage);

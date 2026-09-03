@@ -294,12 +294,13 @@ async function monitorPositions(): Promise<void> {
  */
 export async function startTradingRuntime(
   executionMode: ExecutionMode = "PAPER",
+  tradingEnabled = false,
 ): Promise<TradingOrchestrator> {
   if (_running) {
     return _orchestrator!;
   }
 
-  _orchestrator = new TradingOrchestrator(executionMode);
+  _orchestrator = new TradingOrchestrator(executionMode, tradingEnabled);
   _running = true;
   _stats.startedAt = Date.now();
   _stats.executionMode = executionMode;

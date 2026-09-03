@@ -115,6 +115,7 @@ function createMockClient(overrides?: {
     getIncomeHistory: vi.fn().mockResolvedValue(config.getIncomeHistoryResult),
     getOpenOrders: vi.fn().mockResolvedValue(config.getOpenOrdersResult),
     cancelOrder: vi.fn().mockResolvedValue({ orderId: 1, status: "CANCELED" }),
+    getMarginType: vi.fn().mockResolvedValue("isolated" as const),
     request: vi.fn().mockImplementation(async (method: string, endpoint: string, params: any) => {
       if (endpoint.includes("/fapi/v1/order") && params.type === "STOP_MARKET") {
         return { orderId: 99001, status: "NEW" };
