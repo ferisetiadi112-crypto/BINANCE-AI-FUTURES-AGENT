@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Cpu, Globe, HardDrive, Radio, Server, Wifi } from "lucide-react";
 import { PageHeader, Panel, Stat, Tag } from "@/components/space/Panel";
-import { fetchSystem, fetchHealth } from "@/api/client";
+import { fetchSystem, fetchHealth, fetchDiagnostic } from "@/api/client";
 
 export const Route = createFileRoute("/system")({
   head: () => ({
@@ -25,6 +25,13 @@ function System() {
     queryKey: ["health"],
     queryFn: fetchHealth,
   });
+
+  const { data: diagResp } = useQuery({
+    queryKey: ["diagnostic"],
+    queryFn: fetchDiagnostic,
+    refetchInterval: 30_000,
+  });
+  const diag = diagResp?.data;
 
   const system = systemResp?.data;
   const health = healthResp?.data;
@@ -95,6 +102,43 @@ function System() {
               <div className="flex justify-between"><span className="label-mono">Max Leverage</span><span className="font-mono text-xs text-foreground">{config?.maxLeverage || 10}x</span></div>
               <div className="flex justify-between"><span className="label-mono">Binance Testnet</span><span className="font-mono text-xs text-foreground">{config?.binanceTestnetEnabled ? "Connected" : "Not configured"}</span></div>
             </div>
+          </div>
+        </Panel>
+
+        {/* P7D-3-FIX-CONNECTION-DIAGNOSTIC: Runtime Diagnostic Panel */}
+        <Panel title="Testnet Diagnostic" code="P7D-3-FIX" glow>
+          <div className="space-y-3">
+            {diag ? (
+              <>
+                <div className="rounded-sm border border-primary/30 bg-primary/10 p-3">
+                  <div className="label-mono">Environment</div>
+                  <div className="mt-1 grid grid-cols-2 gap-2">
+                    <div className="flex justify-between"><span className="label-mono">API Key</span><span className={`font-mono text-xs ${diag.environment?.hasApiKey ? "text-gain" : "text-loss"}`}>{diag.environment?.hasApiKey ? "PRESENT" : "MISSING"}</span></div>
+                    <div className="flex justify-between"><span className="label-mono">Secret</span><span className={`font-mono text-xs ${diag.environment?.hasSecret ? "text-gain" : "text-loss"}`}>{diag.environment?.hasSecret ? "PRESENT" : "MISSING"}</span></div>
+                  </div>
+                </div>
+                <div className="space-y-2 border-t border-hairline pt-3">
+                  <div className="flex justify-between"><span className="label-mono">Execution Mode</span><span className={`font-mono text-xs ${diag.execution?.executionMode === "TESTNET" ? "text-gain" : "text-primary"}`}>{diag.execution?.executionMode}</span></div>
+                  <div className="flex justify-between"><span className="label-mono">Testnet Configured</span><span className={`font-mono text-xs ${diag.execution?.testnetConfigured ? "text-gain" : "text-loss"}`}>{diag.execution?.testnetConfigured ? "YES" : "NO"}</span></div>
+                  <div className="flex justify-between"><span className="label-mono">Testnet Ready</span><span className={`font-mono text-xs ${diag.execution?.testnetReady ? "text-gain" : "text-loss"}`}>{diag.execution?.testnetReady ? "YES" : "NO"}</span></div>
+                  <div className="flex justify-between"><span className="label-mono">Connection Status</span><span className={`font-mono text-xs ${diag.connection?.status === "CONNECTED" ? "text-gain" : "text-loss"}`}>{diag.connection?.status}</span></div>
+                  <div className="flex justify-between"><span className="label-mono">Client Connected</span><span className={`font-mono text-xs ${diag.connection?.clientConnected ? "text-gain" : "text-loss"}`}>{diag.connection?.clientConnected ? "YES" : "NO"}</span></div>
+                  {diag.connection?.connectionError && (
+                    <div className="rounded-sm border border-loss/30 bg-loss/5 p-2">
+                      <div className="label-mono text-loss">Connection Error</div>
+                      <div className="mt-1 font-mono text-[0.65rem] text-foreground/80">{diag.connection.connectionError}</div>
+                    </div>
+                  )}
+                  {diag.connection?.consecutiveFailures > 0 && (
+                    <div className="flex justify-between"><span className="label-mono">Consecutive Failures</span><span className="font-mono text-xs text-loss">{diag.connection.consecutiveFailures}</span></div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-center py-8 text-center">
+                <div className="font-mono text-sm text-muted-foreground">Loading diagnostic...</div>
+              </div>
+            )}
           </div>
         </Panel>
       </div>
