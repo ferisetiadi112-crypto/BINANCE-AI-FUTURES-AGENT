@@ -72,7 +72,8 @@ describe("P7B — RiskEngine effective allocation enforcement", () => {
   let engine: RiskEngine;
 
   beforeEach(() => {
-    engine = new RiskEngine({ tradingEnabled: true,
+    engine = new RiskEngine({
+      tradingEnabled: true,
       aiAllocationLimit: 10.0,
       maxLossPerTrade: 1.0,
       maxLeverage: 20,
@@ -84,7 +85,6 @@ describe("P7B — RiskEngine effective allocation enforcement", () => {
       minWalletBalance: 0.50,
       maxDecisionAge: 300_000,
       requireGoodDataQuality: true,
-      tradingEnabled: true,
     });
   });
 
@@ -320,7 +320,8 @@ describe("P7B — execution boundary enforcement", () => {
   let engine: RiskEngine;
 
   beforeEach(() => {
-    engine = new RiskEngine({ tradingEnabled: true,
+    engine = new RiskEngine({
+      tradingEnabled: true,
       aiAllocationLimit: 10.0,
       maxLossPerTrade: 1.0,
       maxLeverage: 20,
@@ -332,7 +333,6 @@ describe("P7B — execution boundary enforcement", () => {
       minWalletBalance: 0.50,
       maxDecisionAge: 300_000,
       requireGoodDataQuality: true,
-      tradingEnabled: true,
     });
   });
 
