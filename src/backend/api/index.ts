@@ -36,7 +36,7 @@ import { getProviderRegistry } from "../ai/llm/providers";
 import { walletRepository } from "../repositories/wallet";
 import { getTestnetExecutor } from "../exchange/testnet-executor";
 import { isTestnetConfigured } from "../exchange/binance-testnet";
-import { getJournalEvents, getRecentJournalEvents, type JournalEventType, type JournalImportance } from "../journal";
+import { getJournalEvents, getRecentJournalEvents, getRecentJournalEventsAsync, type JournalEventType, type JournalImportance } from "../journal";
 import { getReviews } from "../journal/post-trade-review";
 import { getOrchestrator } from "../trading/runtime";
 import type { ApiResponse, LLMStatusResponse } from "../../types/api";
@@ -443,27 +443,36 @@ export const getJournal = createServerFn({ method: "GET" }).handler(
 
 export const getAiLogbook = createServerFn({ method: "GET" }).handler(
   async () => {
-    const { formatLogbookEntries, computeLogbookSummary } = await import(
-      "../journal/ai-logbook-formatter"
-    );
-    const { getOrchestrator } = await import("../trading/runtime");
-    const { getRecentJournalEventsAsync } = await import("../journal/index");
+    try {
+      const { formatLogbookEntries, computeLogbookSummary } = await import(
+        "../journal/ai-logbook-formatter"
+      );
 
-    // P7D-4.1: Read from PostgreSQL (persistent source of truth)
-    const events = await getRecentJournalEventsAsync(500);
-    const entries = formatLogbookEntries(events);
-    const summary = computeLogbookSummary(entries);
+      // P7D-4.1: Read from PostgreSQL (persistent source of truth)
+      const events = await getRecentJournalEventsAsync(500);
+      const entries = formatLogbookEntries(events);
+      const summary = computeLogbookSummary(entries);
 
-    const orchestrator = getOrchestrator();
-    const runtimeActive = orchestrator !== null;
-    const runtimeRunning = orchestrator?.getRiskEngine() !== undefined;
+      const orchestrator = getOrchestrator();
+      const runtimeActive = orchestrator !== null;
+      const runtimeRunning = orchestrator?.getRiskEngine() !== undefined;
 
-    return wrap({
-      entries: JSON.parse(JSON.stringify(entries)) as any,
-      summary: JSON.parse(JSON.stringify(summary)) as any,
-      runtimeActive,
-      runtimeRunning,
-    } as any);
+      return wrap({
+        entries: JSON.parse(JSON.stringify(entries)) as any,
+        summary: JSON.parse(JSON.stringify(summary)) as any,
+        runtimeActive,
+        runtimeRunning,
+      } as any);
+    } catch (err) {
+      // Never let AI Logbook errors break the server or other endpoints
+      return wrap({
+        entries: [] as any,
+        summary: { analyses: 0, decisions: 0, riskChecks: 0, trades: 0, rejected: 0, memorySaved: 0, learningGenerated: 0 } as any,
+        runtimeActive: false,
+        runtimeRunning: false,
+        error: err instanceof Error ? err.message : "Unknown error",
+      } as any);
+    }
   },
 );
 

@@ -318,10 +318,12 @@ function AiLogbook() {
   const [activeFilter, setActiveFilter] = useState("SEMUA");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const { data: logbookResp, isLoading: logbookLoading } = useQuery({
+  const { data: logbookResp, isLoading: logbookLoading, isError: logbookError } = useQuery({
     queryKey: ["ai-logbook"],
     queryFn: fetchAiLogbook,
     refetchInterval: 10_000,
+    retry: 2,
+    retryDelay: 2000,
   });
 
   const { data: runtimeResp } = useQuery({
@@ -358,7 +360,7 @@ function AiLogbook() {
     return result;
   }, [entries, activeFilter, searchQuery]);
 
-  if (logbookLoading) {
+  if (logbookLoading && !logbookResp) {
     return (
       <div className="mx-auto max-w-[110rem]">
         <PageHeader
@@ -369,6 +371,29 @@ function AiLogbook() {
         <div className="flex items-center justify-center py-20">
           <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
         </div>
+      </div>
+    );
+  }
+
+  if (logbookError && !logbookResp) {
+    return (
+      <div className="mx-auto max-w-[110rem]">
+        <PageHeader
+          eyebrow="Cognition · AI Logbook"
+          title="AI Logbook"
+          desc="Gagal memuat aktivitas AI."
+        />
+        <Panel title="Error" code="ERROR">
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <AlertTriangle className="mb-3 h-8 w-8 text-loss" />
+            <div className="font-mono text-sm text-loss">
+              Logbook tidak dapat memuat aktivitas.
+            </div>
+            <div className="mt-1 font-mono text-[0.65rem] text-muted-foreground/60">
+              Coba muat ulang halaman.
+            </div>
+          </div>
+        </Panel>
       </div>
     );
   }
