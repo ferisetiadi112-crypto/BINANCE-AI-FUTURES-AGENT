@@ -14,6 +14,10 @@ const MockOrchestratorConstructor = vi.fn().mockImplementation(() => ({
   getDailyStats: vi.fn().mockReturnValue({ pnl: 0, sessionPnl: 0, locked: false, cooldownActive: false, openPositionCount: 0 }),
   getRecentActivity: vi.fn().mockReturnValue([]),
   getPaperEngine: vi.fn().mockReturnValue({ getPosition: vi.fn().mockReturnValue(null) }),
+  initializeTestnet: vi.fn().mockResolvedValue(false),
+  isTestnetReady: vi.fn().mockReturnValue(false),
+  stop: vi.fn(),
+  reconcilePositions: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("./orchestrator", () => ({
@@ -35,6 +39,10 @@ MockOrchestratorConstructor.mockImplementation(function (this: any) {
   this.getRecentActivity = vi.fn().mockReturnValue([]);
   this.getPaperEngine = vi.fn().mockReturnValue({ getPosition: vi.fn().mockReturnValue(null) });
   this.getPaperStats = vi.fn().mockReturnValue({});
+  this.initializeTestnet = vi.fn().mockResolvedValue(false);
+  this.isTestnetReady = vi.fn().mockReturnValue(false);
+  this.stop = vi.fn();
+  this.reconcilePositions = vi.fn().mockResolvedValue(undefined);
 });
 
 import {

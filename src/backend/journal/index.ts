@@ -41,7 +41,15 @@ export type JournalEventType =
   | "HARD_PROFIT_CAP"
   | "PERIODIC_REPORT"
   | "POSITION_OPENED"
-  | "POSITION_CLOSED";
+  | "POSITION_CLOSED"
+  | "ORDER_SUBMITTED"
+  | "ORDER_CONFIRMED"
+  | "POSITION_MONITOR"
+  | "STOP_LOSS"
+  | "TAKE_PROFIT"
+  | "PNL_UPDATED"
+  | "RISK_LOCKED"
+  | "STARTUP_RECONCILIATION";
 
 export type JournalImportance = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
@@ -367,13 +375,144 @@ export function recordPositionOpened(
 
 export function recordPositionClosed(
   symbol: string,
-  margin: number,
+  side: "LONG" | "SHORT",
+  exitPrice: number,
+  realizedPnl: number,
+  orderId: number,
 ): JournalEvent {
   return recordJournalEvent({
     eventType: "POSITION_CLOSED",
+    importance: realizedPnl >= 0 ? "MEDIUM" : "HIGH",
+    symbol,
+    message: `Position closed: ${side} ${symbol} @ $${exitPrice.toFixed(2)} | Realized PnL: $${realizedPnl.toFixed(4)} (orderId: ${orderId})`,
+    pnl: realizedPnl,
+    position: {
+      symbol,
+      side,
+      entryPrice: 0,
+      margin: 0,
+      leverage: 0,
+    },
+    details: { orderId, exitPrice },
+  });
+}
+
+export function recordOrderSubmitted(
+  symbol: string,
+  direction: string,
+  quantity: number,
+  leverage: number,
+  decisionId: string,
+): JournalEvent {
+  return recordJournalEvent({
+    eventType: "ORDER_SUBMITTED",
+    importance: "HIGH",
+    symbol,
+    message: `Order submitted: ${direction} ${quantity} ${symbol} (${leverage}x leverage)`,
+    decisionId,
+    action: "Order submitted to Binance Testnet",
+  });
+}
+
+export function recordOrderConfirmed(
+  symbol: string,
+  direction: string,
+  orderId: number,
+  confirmed: boolean,
+  details: string,
+): JournalEvent {
+  return recordJournalEvent({
+    eventType: "ORDER_CONFIRMED",
+    importance: confirmed ? "HIGH" : "CRITICAL",
+    symbol,
+    message: `Order ${confirmed ? "confirmed" : "NOT confirmed"}: ${direction} ${symbol} (orderId: ${orderId}) — ${details}`,
+    details: { orderId, confirmed },
+  });
+}
+
+export function recordStopLoss(
+  symbol: string,
+  direction: string,
+  stopPrice: number,
+  orderId: number,
+): JournalEvent {
+  return recordJournalEvent({
+    eventType: "STOP_LOSS",
     importance: "MEDIUM",
     symbol,
-    message: `Position closed: ${symbol} (margin $${margin.toFixed(2)} released)`,
+    message: `Stop-loss placed: ${direction} ${symbol} @ $${stopPrice} (orderId: ${orderId})`,
+    details: { stopPrice, orderId },
+  });
+}
+
+export function recordTakeProfit(
+  symbol: string,
+  direction: string,
+  targetPrice: number,
+  orderId: number,
+): JournalEvent {
+  return recordJournalEvent({
+    eventType: "TAKE_PROFIT",
+    importance: "MEDIUM",
+    symbol,
+    message: `Take-profit placed: ${direction} ${symbol} @ $${targetPrice} (orderId: ${orderId})`,
+    details: { targetPrice, orderId },
+  });
+}
+
+export function recordPositionMonitor(
+  symbol: string,
+  localPresent: boolean,
+  remotePresent: boolean,
+  details: string,
+): JournalEvent {
+  return recordJournalEvent({
+    eventType: "POSITION_MONITOR",
+    importance: localPresent !== remotePresent ? "CRITICAL" : "LOW",
+    symbol,
+    message: `Position monitor: ${symbol} local=${localPresent} remote=${remotePresent} — ${details}`,
+    details: { localPresent, remotePresent },
+  });
+}
+
+export function recordPnlUpdated(
+  dailyPnl: number,
+  sessionPnl: number,
+  source: string,
+): JournalEvent {
+  return recordJournalEvent({
+    eventType: "PNL_UPDATED",
+    importance: "MEDIUM",
+    message: `PnL updated: daily=$${dailyPnl.toFixed(4)}, session=$${sessionPnl.toFixed(4)} (${source})`,
+    pnl: sessionPnl,
+    details: { dailyPnl, sessionPnl, source },
+  });
+}
+
+export function recordRiskLocked(
+  reason: string,
+  dailyPnl: number,
+  sessionPnl: number,
+): JournalEvent {
+  return recordJournalEvent({
+    eventType: "RISK_LOCKED",
+    importance: "CRITICAL",
+    message: `Risk engine LOCKED: ${reason}`,
+    pnl: dailyPnl,
+    details: { reason, dailyPnl, sessionPnl },
+    action: "Trading locked",
+  });
+}
+
+export function recordStartupReconciliation(
+  success: boolean,
+  details: string,
+): JournalEvent {
+  return recordJournalEvent({
+    eventType: "STARTUP_RECONCILIATION",
+    importance: success ? "HIGH" : "CRITICAL",
+    message: `Startup reconciliation: ${success ? "SUCCESS" : "FAILED"} — ${details}`,
+    details: { success },
   });
 }
 

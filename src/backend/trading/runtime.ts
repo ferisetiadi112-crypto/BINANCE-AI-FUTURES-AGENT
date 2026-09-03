@@ -1,32 +1,35 @@
 /**
- * Trading Runtime — BINANCE AI FUTURES AGENT v0.1
+ * Trading Runtime — BINANCE AI FUTURES AGENT v0.1 (P4)
  *
  * Activates the TradingOrchestrator at runtime by creating a singleton instance
  * and running a periodic loop that calls processRealtimeUpdate() for all enabled
  * symbols from the Binance WebSocket feed.
  *
- * Lifecycle:
- *   startTradingRuntime()
- *     → creates TradingOrchestrator singleton (if not exists)
+ * P4 Execution Modes:
+ * - PAPER: Uses PaperTradingEngine (simulation only)
+ * - TESTNET: Uses TestnetExecutor (Binance Futures Testnet)
+ *
+ * Lifecycle (TESTNET):
+ *   startTradingRuntime("TESTNET")
+ *     → validates testnet configuration
+ *     → connects to Binance Futures Testnet
+ *     → reconciles positions
+ *     → restores risk state
+ *     → creates TradingOrchestrator singleton
  *     → starts periodic reporting (30-min interval)
  *     → starts journal retention enforcement
  *     → starts interval loop (every 15 seconds)
- *     → each tick: orchestrator.processRealtimeUpdate() processes all 12 symbols
- *
- *   stopTradingRuntime()
- *     → clears interval loop
- *     → stops periodic reporting
- *     → stops journal retention
- *     → resets singleton
+ *     → each tick: orchestrator.processRealtimeUpdate() processes all symbols
+ *     → periodic position monitoring
  *
  * Safety:
  * - Idempotent: startTradingRuntime() is safe to call multiple times
  * - OFFLINE/STALE symbols are rejected by processRealtimeUpdate() internally
  * - No duplicate timers, no duplicate WebSocket connections
- * - Paper Trading only, Risk Engine untouched
+ * - Risk Engine untouched by runtime — only orchestrator interacts with it
  */
 
-import { TradingOrchestrator } from "./orchestrator";
+import { TradingOrchestrator, type ExecutionMode } from "./orchestrator";
 import { logger } from "../logger";
 import {
   startPeriodicReporting,
@@ -43,12 +46,8 @@ import { getReviews } from "../journal/post-trade-review";
 
 // ─── Configuration ───────────────────────────────────────────────
 
-/**
- * Interval in milliseconds between each orchestrator tick.
- * Each tick processes all enabled symbols via processRealtimeUpdate().
- * 15 seconds balances responsiveness with resource usage.
- */
 const TICK_INTERVAL_MS = 15_000;
+const POSITION_MONITOR_INTERVAL_MS = 30_000;
 
 // ─── Runtime Stats ──────────────────────────────────────────────
 
@@ -64,6 +63,7 @@ export type RuntimeEvent = {
   riskReason: string | null;
   executionResult: string | null;
   paperTradeId: string | null;
+  testnetOrderId: number | null;
   experienceRecorded: boolean;
   error: string | null;
 };
@@ -76,6 +76,7 @@ export type PerSymbolStats = {
   noTrade: number;
   riskRejected: number;
   paperExecutions: number;
+  testnetExecutions: number;
   errors: number;
 };
 
@@ -88,8 +89,11 @@ export type RuntimeStats = {
   totalNoTrade: number;
   totalRiskRejected: number;
   totalPaperExecutions: number;
+  totalTestnetExecutions: number;
   lastTickAt: number;
   startedAt: number;
+  executionMode: ExecutionMode;
+  testnetReady: boolean;
 };
 
 export type RuntimeSnapshot = {
@@ -112,17 +116,16 @@ const _stats: RuntimeStats = {
   totalNoTrade: 0,
   totalRiskRejected: 0,
   totalPaperExecutions: 0,
+  totalTestnetExecutions: 0,
   lastTickAt: 0,
   startedAt: 0,
+  executionMode: "PAPER",
+  testnetReady: false,
 };
 
 const _perSymbol = new Map<string, PerSymbolStats>();
 const _events: RuntimeEvent[] = [];
 
-/**
- * Clone a RuntimeEvent. All fields are primitives, so spread is sufficient.
- * Prevents callers from mutating internal event buffer via returned references.
- */
 function cloneEvent(e: RuntimeEvent): RuntimeEvent {
   return { ...e };
 }
@@ -131,6 +134,7 @@ function cloneEvent(e: RuntimeEvent): RuntimeEvent {
 
 let _orchestrator: TradingOrchestrator | null = null;
 let _intervalId: ReturnType<typeof setInterval> | null = null;
+let _positionMonitorId: ReturnType<typeof setInterval> | null = null;
 let _running = false;
 
 // ─── Runtime Loop ────────────────────────────────────────────────
@@ -151,14 +155,12 @@ async function tick(): Promise<void> {
     _stats.totalSkipped += skipped;
     _stats.totalErrors += errored;
 
-    // Per-symbol processed/skipped counts
     for (const r of results) {
       const ps = _getOrCreatePerSymbol(r.symbol);
       if (r.reason === "OK") ps.processed++;
       else if (r.reason === "OFFLINE/STALE/insufficient_data") ps.skipped++;
     }
 
-    // Aggregate decision-level metrics and record events
     for (const r of results) {
       try {
         const sym = r.symbol;
@@ -178,6 +180,7 @@ async function tick(): Promise<void> {
             riskReason: null,
             executionResult: null,
             paperTradeId: null,
+            testnetOrderId: null,
             experienceRecorded: false,
             error: "Symbol processing error",
           });
@@ -197,19 +200,21 @@ async function tick(): Promise<void> {
             riskReason: null,
             executionResult: null,
             paperTradeId: null,
+            testnetOrderId: null,
             experienceRecorded: false,
             error: null,
           });
           continue;
         }
 
-        const { decision, riskResult, trade } = r.result;
+        const { decision, riskResult, trade, testnetResult } = r.result;
         _stats.totalDecisions++;
         ps.decisions++;
 
         let eventDecision: string | null = decision.direction;
         let eventExecResult: string | null = null;
         let eventPaperId: string | null = null;
+        let eventTestnetOrderId: number | null = null;
 
         if (decision.direction === "NO_TRADE") {
           _stats.totalNoTrade++;
@@ -224,6 +229,11 @@ async function tick(): Promise<void> {
           ps.paperExecutions++;
           eventExecResult = "EXECUTED";
           eventPaperId = trade.id;
+        } else if (testnetResult) {
+          _stats.totalTestnetExecutions++;
+          ps.testnetExecutions++;
+          eventExecResult = testnetResult.success ? "TESTNET_EXECUTED" : "TESTNET_FAILED";
+          eventTestnetOrderId = testnetResult.orderId;
         }
 
         _events.push({
@@ -238,6 +248,7 @@ async function tick(): Promise<void> {
           riskReason: riskResult.reason,
           executionResult: eventExecResult,
           paperTradeId: eventPaperId,
+          testnetOrderId: eventTestnetOrderId,
           experienceRecorded: true,
           error: null,
         });
@@ -246,7 +257,6 @@ async function tick(): Promise<void> {
       }
     }
 
-    // Trim event buffer to bounded size
     while (_events.length > MAX_EVENT_BUFFER) {
       _events.shift();
     }
@@ -263,26 +273,50 @@ async function tick(): Promise<void> {
   }
 }
 
+// ─── Position Monitor Loop (P4) ─────────────────────────────────
+
+async function monitorPositions(): Promise<void> {
+  if (!_orchestrator || !_orchestrator.isTestnetReady()) return;
+
+  try {
+    await _orchestrator.reconcilePositions();
+  } catch (err) {
+    logger.error("trading-runtime", `Position monitor error: ${err}`);
+  }
+}
+
 // ─── Public API ──────────────────────────────────────────────────
 
 /**
  * Start the trading runtime.
  *
- * Creates a singleton TradingOrchestrator and starts:
- * - Periodic reporting (30-min interval)
- * - Journal retention enforcement
- * - Periodic loop (every 15 seconds)
- *
- * Safe to call multiple times — the singleton and interval are created only once.
+ * @param executionMode - "PAPER" (default) or "TESTNET"
  */
-export async function startTradingRuntime(): Promise<TradingOrchestrator> {
+export async function startTradingRuntime(
+  executionMode: ExecutionMode = "PAPER",
+): Promise<TradingOrchestrator> {
   if (_running) {
     return _orchestrator!;
   }
 
-  _orchestrator = new TradingOrchestrator();
+  _orchestrator = new TradingOrchestrator(executionMode);
   _running = true;
   _stats.startedAt = Date.now();
+  _stats.executionMode = executionMode;
+
+  // Initialize testnet if requested
+  if (executionMode === "TESTNET") {
+    const testnetReady = await _orchestrator.initializeTestnet();
+    _stats.testnetReady = testnetReady;
+
+    if (!testnetReady) {
+      logger.warn(
+        "trading-runtime",
+        "Testnet initialization failed — falling back to PAPER mode",
+      );
+      _stats.executionMode = "PAPER";
+    }
+  }
 
   // Start periodic reporting (H-3)
   startPeriodicReporting(() => {
@@ -302,13 +336,11 @@ export async function startTradingRuntime(): Promise<TradingOrchestrator> {
   startRetentionEnforcement((cutoffTimestamp: number) => {
     const events = getAllJournalEvents();
     const oldEvents = events.filter((e) => e.timestamp < cutoffTimestamp);
-    // Note: In-memory cleanup only for now
     return oldEvents.length;
   });
 
   startReviewRetentionEnforcement((_cutoffTimestamp: number) => {
     const reviews = getReviews();
-    // Reviews are cleaned via journal retention — reviews follow trade lifecycle
     return 0;
   });
 
@@ -318,59 +350,54 @@ export async function startTradingRuntime(): Promise<TradingOrchestrator> {
   // Start periodic loop
   _intervalId = setInterval(() => tick().catch(err => logger.error("trading-runtime", `Tick error: ${err}`)), TICK_INTERVAL_MS);
 
-  logger.info("trading-runtime", "Trading runtime started (PAPER MODE, 12 symbols, 15s tick)");
+  // Start position monitor loop (P4)
+  if (executionMode === "TESTNET" && _stats.testnetReady) {
+    _positionMonitorId = setInterval(
+      () => monitorPositions().catch(err => logger.error("trading-runtime", `Monitor error: ${err}`)),
+      POSITION_MONITOR_INTERVAL_MS,
+    );
+  }
+
+  const modeLabel = _stats.executionMode === "TESTNET" ? "TESTNET" : "PAPER";
+  logger.info("trading-runtime", `Trading runtime started (${modeLabel}, 12 symbols, 15s tick)`);
   return _orchestrator;
 }
 
 /**
  * Stop the trading runtime.
- *
- * Clears the interval loop, stops periodic reporting, stops retention, and resets the singleton.
- * WebSocket connections are managed by FeedManager (separate lifecycle).
  */
 export function stopTradingRuntime(): void {
   if (_intervalId !== null) {
     clearInterval(_intervalId);
     _intervalId = null;
   }
+  if (_positionMonitorId !== null) {
+    clearInterval(_positionMonitorId);
+    _positionMonitorId = null;
+  }
+  _orchestrator?.stop();
   _orchestrator = null;
   _running = false;
 
-  // Stop periodic reporting
   stopPeriodicReporting();
-
-  // Stop retention
   stopRetentionEnforcement();
   stopReviewRetentionEnforcement();
 
   logger.info("trading-runtime", "Trading runtime stopped");
 }
 
-/**
- * Get the current TradingOrchestrator instance.
- * Returns null if runtime has not been started.
- */
 export function getOrchestrator(): TradingOrchestrator | null {
   return _orchestrator;
 }
 
-/**
- * Check if the trading runtime is currently active.
- */
 export function isRuntimeRunning(): boolean {
   return _running;
 }
 
-/**
- * Get current runtime statistics.
- */
 export function getRuntimeStats(): RuntimeStats {
   return { ..._stats };
 }
 
-/**
- * Reset runtime state (for testing only).
- */
 export function resetRuntime(): void {
   stopTradingRuntime();
   _stats.tickCount = 0;
@@ -381,15 +408,15 @@ export function resetRuntime(): void {
   _stats.totalNoTrade = 0;
   _stats.totalRiskRejected = 0;
   _stats.totalPaperExecutions = 0;
+  _stats.totalTestnetExecutions = 0;
   _stats.lastTickAt = 0;
   _stats.startedAt = 0;
+  _stats.executionMode = "PAPER";
+  _stats.testnetReady = false;
   _perSymbol.clear();
   _events.length = 0;
 }
 
-/**
- * Export tick interval for testing.
- */
 export function getTickIntervalMs(): number {
   return TICK_INTERVAL_MS;
 }
@@ -399,7 +426,7 @@ export function getTickIntervalMs(): number {
 function _getOrCreatePerSymbol(symbol: string): PerSymbolStats {
   let ps = _perSymbol.get(symbol);
   if (!ps) {
-    ps = { symbol, processed: 0, skipped: 0, decisions: 0, noTrade: 0, riskRejected: 0, paperExecutions: 0, errors: 0 };
+    ps = { symbol, processed: 0, skipped: 0, decisions: 0, noTrade: 0, riskRejected: 0, paperExecutions: 0, testnetExecutions: 0, errors: 0 };
     _perSymbol.set(symbol, ps);
   }
   return ps;
@@ -407,10 +434,6 @@ function _getOrCreatePerSymbol(symbol: string): PerSymbolStats {
 
 // ─── Runtime Snapshot ───────────────────────────────────────────
 
-/**
- * Get a complete snapshot of the runtime state.
- * Read-only — does not modify any runtime state.
- */
 export function getRuntimeSnapshot(): RuntimeSnapshot {
   return {
     running: _running,
@@ -422,12 +445,10 @@ export function getRuntimeSnapshot(): RuntimeSnapshot {
   };
 }
 
-/** Get per-symbol statistics. */
 export function getPerSymbolStats(): PerSymbolStats[] {
   return Array.from(_perSymbol.values()).map(ps => ({ ...ps }));
 }
 
-/** Get recent runtime events (bounded buffer, deep-cloned for caller safety). */
 export function getRuntimeEvents(): RuntimeEvent[] {
   return _events.map(cloneEvent);
 }

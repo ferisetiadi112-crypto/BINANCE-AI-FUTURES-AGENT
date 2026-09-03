@@ -146,6 +146,47 @@ export type TestnetTradeRecord = {
   isMaker: boolean;
 };
 
+// ─── Exchange Info Types (P4-FIX) ─────────────────────────────────
+
+export type ExchangeFilter = {
+  filterType: string;
+  minPrice?: string;
+  maxPrice?: string;
+  tickSize?: string;
+  minQty?: string;
+  maxQty?: string;
+  stepSize?: string;
+  minNotional?: string;
+  notional?: string;
+  limit?: string;
+};
+
+export type SymbolInfo = {
+  symbol: string;
+  status: string; // "TRADING" | "BREAK" etc.
+  baseAsset: string;
+  quoteAsset: string;
+  pricePrecision: number;
+  quantityPrecision: number;
+  baseAssetPrecision: number;
+  quoteAssetPrecision: number;
+  filters: ExchangeFilter[];
+  orderTypes: string[];
+  timeInForce: string[];
+};
+
+export type ExchangeInfoResponse = {
+  timezone: string;
+  serverTime: number;
+  rateLimits: Array<{
+    rateLimitType: string;
+    interval: string;
+    intervalNum: number;
+    limit: number;
+  }>;
+  symbols: SymbolInfo[];
+};
+
 // ─── Binance Testnet Client ─────────────────────────────────────────
 
 export class BinanceTestnetClient {
@@ -203,7 +244,7 @@ export class BinanceTestnetClient {
 
   // ─── Generic Request ─────────────────────────────────────────────
 
-  private async request<T>(
+  async request<T>(
     method: "GET" | "POST" | "DELETE",
     endpoint: string,
     params: Record<string, string> = {},
@@ -421,6 +462,52 @@ export class BinanceTestnetClient {
       symbol,
       limit: String(limit),
     });
+  }
+
+  // ─── Exchange Info (P4-FIX) ─────────────────────────────────────
+
+  private exchangeInfoCache: { data: ExchangeInfoResponse; fetchedAt: number } | null = null;
+  private static readonly EXCHANGE_INFO_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+  /**
+   * Get Binance Futures exchange information (symbol filters, precision, etc.).
+   * Cached for 1 hour to avoid excessive API calls.
+   * Falls back to stale cache if API fails.
+   */
+  async getExchangeInfo(): Promise<ExchangeInfoResponse> {
+    const now = Date.now();
+
+    // Return cached data if still valid
+    if (
+      this.exchangeInfoCache &&
+      now - this.exchangeInfoCache.fetchedAt < BinanceTestnetClient.EXCHANGE_INFO_TTL_MS
+    ) {
+      return this.exchangeInfoCache.data;
+    }
+
+    try {
+      const data = await this.request<ExchangeInfoResponse>("GET", "/fapi/v1/exchangeInfo", {}, false);
+      this.exchangeInfoCache = { data, fetchedAt: now };
+      logger.info("binance-testnet", `Exchange info fetched: ${data.symbols.length} symbols`);
+      return data;
+    } catch (err) {
+      logger.warn("binance-testnet", `Failed to fetch exchange info: ${err}`);
+      // Return stale cache if available
+      if (this.exchangeInfoCache) {
+        logger.warn("binance-testnet", "Using stale exchange info cache");
+        return this.exchangeInfoCache.data;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Get symbol info for a specific symbol.
+   * Returns null if symbol not found.
+   */
+  async getSymbolInfo(symbol: string): Promise<SymbolInfo | null> {
+    const exchangeInfo = await this.getExchangeInfo();
+    return exchangeInfo.symbols.find((s) => s.symbol === symbol) || null;
   }
 
   // ─── Income (PnL) ───────────────────────────────────────────────
