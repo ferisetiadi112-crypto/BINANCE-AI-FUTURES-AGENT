@@ -1,18 +1,9 @@
 /**
- * SystemBoot — P7D-4.5 Game-Like Loading Screen
+ * SystemBoot — P7D-4.6 Premium Cinematic Boot Screen
  *
- * Fullscreen cinematic boot sequence that verifies system readiness
- * by polling getSystemReadiness server function.
- *
- * Boot stages (in order):
- *  1. DATABASE — PostgreSQL connection
- *  2. BINANCE — Futures Testnet connection
- *  3. AI RUNTIME — Trading orchestrator
- *  4. RISK ENGINE — Risk management
- *  5. DASHBOARD — Final preparation
- *
- * After all stages READY → transitions to main system.
- * On refresh: if sessionStorage has systemBooted=true, skip boot.
+ * AAA sci-fi command-system launch sequence for ORBITAL·AI Futures Command.
+ * All readiness state, polling, and sessionStorage behavior are unchanged —
+ * this is a presentation-layer redesign only.
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -33,16 +24,21 @@ interface BootStage {
 
 const POLL_INTERVAL_MS = 1_500;
 const STORAGE_KEY = "orbital_system_booted";
+const SEGMENTS = 24;
+
+/** Stage progress weights — 5 stages, each worth 20%. */
+const STAGE_READY_WEIGHT = 20;
+const STAGE_ACTIVE_WEIGHT = 10;
+
+const BOOT_MESSAGES: Record<string, string> = {
+  database: "CONNECTING TO CORE...",
+  binance: "VERIFYING SYSTEM...",
+  "ai-runtime": "STARTING AI RUNTIME...",
+  "risk-engine": "CALIBRATING RISK ENGINE...",
+  dashboard: "SYNCHRONIZING COMMAND CENTER...",
+};
 
 // ─── Helpers ────────────────────────────────────────────────────────
-
-function getStoredBootState(): boolean {
-  try {
-    return sessionStorage.getItem(STORAGE_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
 
 function setStoredBootState(value: boolean): void {
   try {
@@ -65,14 +61,23 @@ interface SystemBootProps {
 export function SystemBoot({ onReady }: SystemBootProps) {
   const [stages, setStages] = useState<BootStage[]>([
     { id: "database", label: "DATABASE", status: "WAITING" },
-    { id: "binance", label: "BINANCE FUTURES TESTNET", status: "WAITING" },
-    { id: "ai-runtime", label: "AI RUNTIME", status: "WAITING" },
+    { id: "binance", label: "EXCHANGE LINK", status: "WAITING" },
+    { id: "ai-runtime", label: "AI CORE", status: "WAITING" },
     { id: "risk-engine", label: "RISK ENGINE", status: "WAITING" },
-    { id: "dashboard", label: "DASHBOARD", status: "WAITING" },
+    { id: "dashboard", label: "COMMAND CENTER", status: "WAITING" },
   ]);
   const [bootPhase, setBootPhase] = useState<"BOOTING" | "SYSTEM_READY" | "TRANSITIONING">("BOOTING");
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [introStep, setIntroStep] = useState(0); // cinematic intro: 0=frame,1=brand,2=core,3=bar,4=modules
+
+  // Cinematic intro sequence — pure presentation, does not affect readiness.
+  useEffect(() => {
+    const timers = [80, 300, 550, 750, 950].map((delay, i) =>
+      setTimeout(() => setIntroStep(i + 1), delay),
+    );
+    return () => timers.forEach(clearTimeout);
+  }, []);
 
   // Elapsed timer
   useEffect(() => {
@@ -91,7 +96,7 @@ export function SystemBoot({ onReady }: SystemBootProps) {
     [],
   );
 
-  // Poll readiness
+  // Poll readiness — UNCHANGED backend logic.
   useEffect(() => {
     let cancelled = false;
 
@@ -118,7 +123,6 @@ export function SystemBoot({ onReady }: SystemBootProps) {
         } else if (data.binanceConnected) {
           updateStage("binance", "READY", "Terkoneksi");
         } else if (data.runtimeReady) {
-          // Runtime is ready but binance not connected — could be testnet issue
           updateStage("binance", "READY", data.executionMode === "PAPER" ? "PAPER MODE" : "Tidak terhubung");
         } else {
           updateStage("binance", "ACTIVE", "Menghubungkan...");
@@ -182,140 +186,260 @@ export function SystemBoot({ onReady }: SystemBootProps) {
     };
   }, [updateStage, onReady]);
 
+  // ─── Derived presentation values (from REAL stage state only) ────
+
+  const percent = stages.reduce((acc, s) => {
+    if (s.status === "READY") return acc + STAGE_READY_WEIGHT;
+    if (s.status === "ACTIVE") return acc + STAGE_ACTIVE_WEIGHT;
+    return acc;
+  }, 0);
+  const litSegments = Math.round((percent / 100) * SEGMENTS);
+
+  const firstUnready = stages.find((s) => s.status !== "READY");
+  const bootMessage =
+    bootPhase === "SYSTEM_READY" || bootPhase === "TRANSITIONING"
+      ? "SYSTEM ONLINE — COMMAND CENTER READY"
+      : firstUnready
+        ? (BOOT_MESSAGES[firstUnready.id] ?? "INITIALIZING COMMAND SYSTEM")
+        : "INITIALIZING COMMAND SYSTEM";
+
+  const coreOnline = stages.find((s) => s.id === "ai-runtime")?.status === "READY";
+
   return (
-    <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-[oklch(0.08_0.015_175)] text-foreground">
-      {/* Background grid effect */}
-      <div className="absolute inset-0 grid-field opacity-30" />
-
-      {/* Scanline overlay */}
+    <div
+      className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center overflow-hidden bg-[oklch(0.07_0.014_178)] text-foreground transition-all duration-600 ${
+        bootPhase === "TRANSITIONING" ? "scale-[1.06] opacity-0" : "opacity-100"
+      }`}
+    >
+      {/* ── Ambient layers ─────────────────────────────────────── */}
+      <div className="absolute inset-0 grid-field opacity-25" />
       <div className="absolute inset-0 pointer-events-none scanlines" />
+      {/* Soft emerald core halo behind center */}
+      <div
+        className="absolute left-1/2 top-1/2 h-[70vmin] w-[70vmin] -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(circle, oklch(0.78 0.19 158 / 9%) 0%, oklch(0.78 0.19 158 / 3%) 40%, transparent 70%)",
+        }}
+      />
+      {/* Vignette */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(ellipse at center, transparent 45%, oklch(0.05 0.01 180 / 80%) 100%)",
+        }}
+      />
 
-      {/* Content */}
-      <div className="relative z-10 flex flex-col items-center w-full max-w-lg px-6">
-        {/* Logo / Title */}
-        <div className="mb-2 text-center">
-          <div className="font-mono text-[0.65rem] uppercase tracking-[0.35em] text-primary/60">
+      {/* ── HUD frame — thin futuristic border lines ───────────── */}
+      <div
+        className={`absolute inset-3 sm:inset-5 pointer-events-none transition-opacity duration-700 ${
+          introStep >= 1 ? "opacity-100" : "opacity-0"
+        }`}
+      >
+        <div className="absolute inset-0 border border-primary/15" />
+        {/* Corner brackets */}
+        <div className="absolute -top-px -left-px h-6 w-6 border-t-2 border-l-2 border-primary/70" />
+        <div className="absolute -top-px -right-px h-6 w-6 border-t-2 border-r-2 border-primary/70" />
+        <div className="absolute -bottom-px -left-px h-6 w-6 border-b-2 border-l-2 border-primary/70" />
+        <div className="absolute -bottom-px -right-px h-6 w-6 border-b-2 border-r-2 border-primary/70" />
+        {/* Side notches */}
+        <div className="absolute left-0 top-1/2 h-10 w-[3px] -translate-y-1/2 bg-primary/40" />
+        <div className="absolute right-0 top-1/2 h-10 w-[3px] -translate-y-1/2 bg-primary/40" />
+        {/* Top HUD readouts */}
+        <div className="absolute top-2 left-4 font-mono text-[0.5rem] uppercase tracking-[0.3em] text-cyan-signal/50">
+          OBT-CMD // LAUNCH SEQ
+        </div>
+        <div className="absolute top-2 right-4 font-mono text-[0.5rem] uppercase tracking-[0.3em] text-primary/50 tabular-nums">
+          T+{String(elapsed).padStart(2, "0")}s
+        </div>
+        <div className="absolute bottom-2 left-4 font-mono text-[0.5rem] uppercase tracking-[0.3em] text-muted-foreground/40">
+          CORE v7.4D
+        </div>
+        <div className="absolute bottom-2 right-4 font-mono text-[0.5rem] uppercase tracking-[0.3em] text-muted-foreground/40">
+          {percent}%
+        </div>
+      </div>
+
+      {/* ── Content ────────────────────────────────────────────── */}
+      <div className="relative z-10 flex w-full max-w-sm flex-col items-center px-6">
+        {/* Brand block */}
+        <div
+          className={`text-center transition-all duration-500 ${
+            introStep >= 2 ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
+          }`}
+        >
+          <div className="font-mono text-[0.55rem] uppercase tracking-[0.45em] text-cyan-signal/60">
             SYSTEM BOOT
+          </div>
+          <h1 className="mt-2 font-display text-4xl sm:text-5xl font-bold tracking-tight">
+            <span className="text-primary glow-text">ORBITAL</span>
+            <span className="ml-1.5 text-foreground/85">·AI</span>
+          </h1>
+          <div className="mt-1.5 font-mono text-[0.6rem] uppercase tracking-[0.4em] text-primary/50">
+            FUTURES COMMAND
           </div>
         </div>
 
-        <h1 className="font-display text-4xl font-bold tracking-tight text-foreground">
-          <span className="text-primary glow-text">ORBITAL</span>
-          <span className="ml-2 text-foreground/80">·AI</span>
-        </h1>
-
-        <div className="mt-1 font-mono text-xs uppercase tracking-[0.25em] text-primary/50">
-          FUTURES COMMAND
-        </div>
-
-        {/* Central indicator */}
-        <div className="my-8 relative">
-          <div className={`h-10 w-10 rounded-full border-2 flex items-center justify-center transition-all duration-500 ${
-            bootPhase === "SYSTEM_READY"
-              ? "border-gain bg-gain/10 shadow-[0_0_20px_oklch(0.8_0.18_158_/_40%)]"
-              : error
-                ? "border-loss bg-loss/10"
-                : "border-primary/60 bg-primary/5"
-          }`}>
+        {/* ── AI CORE / reactor ─────────────────────────────────── */}
+        <div
+          className={`relative my-6 sm:my-8 transition-all duration-700 ${
+            introStep >= 3 ? "scale-100 opacity-100" : "scale-75 opacity-0"
+          }`}
+        >
+          {/* Outer glow */}
+          <div
+            className={`absolute -inset-6 rounded-full transition-opacity duration-1000 ${
+              coreOnline ? "opacity-100" : "opacity-50"
+            }`}
+            style={{
+              background:
+                "radial-gradient(circle, oklch(0.78 0.19 158 / 18%) 0%, transparent 65%)",
+            }}
+          />
+          {/* Slow rotating dashed ring */}
+          <svg
+            viewBox="0 0 100 100"
+            className="absolute -inset-3 h-[calc(100%+24px)] w-[calc(100%+24px)] animate-spin"
+            style={{ animationDuration: "14s" }}
+          >
+            <circle
+              cx="50" cy="50" r="48" fill="none"
+              stroke="oklch(0.78 0.19 158 / 45%)"
+              strokeWidth="0.8"
+              strokeDasharray="4 6"
+            />
+          </svg>
+          {/* Counter-rotating inner ring with ticks */}
+          <svg
+            viewBox="0 0 100 100"
+            className="absolute -inset-1 h-[calc(100%+8px)] w-[calc(100%+8px)] animate-spin"
+            style={{ animationDuration: "22s", animationDirection: "reverse" }}
+          >
+            <circle
+              cx="50" cy="50" r="46" fill="none"
+              stroke="oklch(0.8 0.13 195 / 35%)"
+              strokeWidth="0.5"
+              strokeDasharray="1 9"
+            />
+          </svg>
+          {/* Core body */}
+          <div
+            className={`relative h-24 w-24 rounded-full border flex items-center justify-center transition-all duration-700 ${
+              bootPhase === "SYSTEM_READY"
+                ? "border-primary bg-primary/15 shadow-[0_0_50px_oklch(0.8_0.18_158_/_45%)]"
+                : error
+                  ? "border-loss/70 bg-loss/10 shadow-[0_0_30px_oklch(0.66_0.2_20_/_30%)]"
+                  : "border-primary/50 bg-primary/5 shadow-[0_0_30px_oklch(0.8_0.18_158_/_20%)]"
+            }`}
+          >
             {bootPhase === "SYSTEM_READY" ? (
-              <svg className="h-5 w-5 text-gain" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <svg className="h-8 w-8 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
             ) : error ? (
-              <span className="text-loss text-lg">✕</span>
+              <span className="text-loss text-2xl">✕</span>
             ) : (
-              <div className="h-3 w-3 rounded-full bg-primary animate-pulse" />
+              <>
+                {/* Pulsing nucleus */}
+                <div className="absolute h-8 w-8 rounded-full bg-primary/80 animate-ping" style={{ animationDuration: "2.2s" }} />
+                <div className="relative h-8 w-8 rounded-full bg-primary shadow-[0_0_18px_oklch(0.86_0.19_158_/_80%)] animate-pulse" />
+                {/* Internal energy swirl */}
+                <div
+                  className="absolute inset-2 rounded-full border border-transparent border-t-primary/60 border-r-cyan-signal/40 animate-spin"
+                  style={{ animationDuration: "1.8s" }}
+                />
+              </>
             )}
           </div>
-          {/* Rotating ring */}
-          {bootPhase === "BOOTING" && (
-            <div className="absolute inset-0 rounded-full border border-primary/30 animate-spin" style={{ animationDuration: "3s" }} />
-          )}
         </div>
 
-        {/* Stage list */}
-        <div className="w-full space-y-2">
-          {stages.map((stage) => (
-            <div
-              key={stage.id}
-              className={`flex items-center gap-3 rounded-sm border px-4 py-2.5 font-mono text-xs transition-all duration-300 ${
-                stage.status === "READY"
-                  ? "border-gain/30 bg-gain/5"
-                  : stage.status === "ACTIVE"
-                    ? "border-primary/30 bg-primary/5"
-                    : stage.status === "ERROR"
-                      ? "border-loss/30 bg-loss/5"
-                      : "border-hairline/30 bg-muted/10"
-              }`}
-            >
-              {/* Status icon */}
-              <div className="flex-shrink-0 w-4 text-center">
-                {stage.status === "READY" ? (
-                  <span className="text-gain text-sm">●</span>
-                ) : stage.status === "ACTIVE" ? (
-                  <span className="inline-block h-2 w-2 rounded-full bg-primary animate-pulse" />
-                ) : stage.status === "ERROR" ? (
-                  <span className="text-loss text-sm">✕</span>
-                ) : (
-                  <span className="text-muted-foreground/40 text-sm">○</span>
-                )}
-              </div>
+        {/* ── Segmented loading bar ─────────────────────────────── */}
+        <div
+          className={`w-full transition-all duration-500 ${
+            introStep >= 4 ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
+          }`}
+        >
+          <div className="flex items-end justify-between font-mono text-[0.55rem] uppercase tracking-[0.25em]">
+            <span className="text-muted-foreground/60">{bootMessage}</span>
+            <span className={`tabular-nums ${bootPhase === "SYSTEM_READY" ? "text-primary glow-text" : "text-primary/80"}`}>
+              {percent}%
+            </span>
+          </div>
+          <div className="mt-2 border border-primary/30 bg-primary/5 px-2 py-1.5">
+            <div className="flex gap-[3px]">
+              {Array.from({ length: SEGMENTS }, (_, i) => (
+                <div
+                  key={i}
+                  className={`h-3.5 flex-1 transition-all duration-300 ${
+                    i < litSegments
+                      ? "bg-primary shadow-[0_0_6px_oklch(0.8_0.18_158_/_60%)]"
+                      : "bg-muted/40"
+                  } ${i === litSegments && bootPhase === "BOOTING" ? "animate-pulse" : ""}`}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
 
-              {/* Label */}
-              <div className="flex-1 min-w-0">
-                <span className={`${
-                  stage.status === "READY"
-                    ? "text-gain"
-                    : stage.status === "ACTIVE"
-                      ? "text-primary"
-                      : stage.status === "ERROR"
-                        ? "text-loss"
-                        : "text-muted-foreground/50"
-                }`}>
+        {/* ── HUD telemetry ─────────────────────────────────────── */}
+        <div
+          className={`mt-5 w-full transition-all duration-500 ${
+            introStep >= 5 ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
+          }`}
+        >
+          <div className="space-y-1">
+            {stages.map((stage) => (
+              <div key={stage.id} className="flex items-center gap-2 font-mono text-[0.62rem] tracking-[0.15em]">
+                <span className="w-32 truncate text-muted-foreground/70 uppercase">
                   {stage.label}
                 </span>
-              </div>
-
-              {/* Status text */}
-              <div className="flex-shrink-0 text-right">
+                <span className="flex-1 border-b border-dotted border-hairline/40" />
                 {stage.status === "READY" ? (
-                  <span className="text-gain text-[0.65rem] font-semibold">READY</span>
-                ) : stage.status === "ACTIVE" ? (
-                  <span className="text-primary/70 text-[0.65rem]">{stage.message || "LOADING..."}</span>
+                  <span className="flex items-center gap-1.5 text-primary">
+                    <span className="text-[0.7rem]">●</span> ONLINE
+                  </span>
                 ) : stage.status === "ERROR" ? (
-                  <span className="text-loss text-[0.65rem]">{stage.message || "ERROR"}</span>
+                  <span className="flex items-center gap-1.5 text-loss">
+                    <span className="text-[0.7rem]">✕</span> FAULT
+                  </span>
                 ) : (
-                  <span className="text-muted-foreground/30 text-[0.65rem]">WAITING...</span>
+                  <span className="flex items-center gap-1.5 text-cyan-signal/80">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-cyan-signal animate-pulse" />
+                    CONNECTING...
+                  </span>
                 )}
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
 
         {/* Error message */}
         {error && (
-          <div className="mt-4 w-full rounded-sm border border-loss/30 bg-loss/5 px-4 py-3">
-            <div className="font-mono text-xs text-loss font-semibold">System initialization error</div>
-            <div className="mt-1 font-mono text-[0.65rem] text-muted-foreground">{error}</div>
+          <div className="mt-3 w-full border border-loss/40 bg-loss/10 px-3 py-2">
+            <div className="font-mono text-[0.6rem] text-loss font-semibold uppercase tracking-widest">
+              System initialization error
+            </div>
+            <div className="mt-0.5 font-mono text-[0.55rem] text-muted-foreground">{error}</div>
           </div>
         )}
 
-        {/* Footer status */}
-        <div className="mt-6 text-center">
-          <div className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-muted-foreground/40">
-            {bootPhase === "SYSTEM_READY"
-              ? "SYSTEM READY — ENTERING COMMAND CENTER"
-              : bootPhase === "TRANSITIONING"
-                ? "TRANSITIONING..."
-                : `INITIALIZING SYSTEM... ${elapsed}s`}
-          </div>
-        </div>
-
-        {/* Disable trading notice */}
-        <div className="mt-3 text-center">
-          <span className="font-mono text-[0.55rem] text-muted-foreground/30">
-            TRADING: OFF • MODE: PAPER
-          </span>
+        {/* Final state */}
+        <div className="mt-5 text-center">
+          {bootPhase === "SYSTEM_READY" || bootPhase === "TRANSITIONING" ? (
+            <div className="animate-scale-in">
+              <div className="font-mono text-xs uppercase tracking-[0.35em] text-primary glow-text">
+                SYSTEM ONLINE
+              </div>
+              <div className="mt-1.5 font-mono text-[0.55rem] uppercase tracking-[0.25em] text-muted-foreground/60">
+                TRADING: OFF &nbsp;•&nbsp; MODE: PAPER
+              </div>
+            </div>
+          ) : (
+            <div className="font-mono text-[0.55rem] uppercase tracking-[0.25em] text-muted-foreground/40">
+              TRADING: OFF &nbsp;•&nbsp; MODE: PAPER
+            </div>
+          )}
         </div>
       </div>
     </div>
