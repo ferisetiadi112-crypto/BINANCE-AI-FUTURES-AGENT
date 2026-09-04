@@ -28,6 +28,10 @@ import { getExchangeSnapshot } from "../exchange/unified-state";
 import { isRuntimeInitialized, getRuntimeInitError } from "../../server";
 import type { ApiResponse } from "../../types/api";
 
+// reused across topbar, sidebar, and monitor so React Query serves them
+// from one cache entry and dedups the network requests.
+export const AGENT_STATUS_QUERY_KEY = ["agent-status"];
+
 // ─── Payload ───────────────────────────────────────────────────────
 
 export type AgentStatusPayload = {
@@ -222,7 +226,9 @@ export function buildAgentStatus(input: {
 export const getAgentStatus = createServerFn({ method: "GET" }).handler(
   async (): Promise<ApiResponse<AgentStatusPayload>> => {
     const orchestrator = getOrchestrator();
-    const activity = getRecentJournalEvents(AGENT_ACTIVITY_LIMIT).map((e) => ({
+    // Lightweight: latest 10 in-memory events only, never the full journal.
+    const latest = getRecentJournalEvents(AGENT_ACTIVITY_LIMIT);
+    const activity = latest.map((e) => ({
       timestamp: e.timestamp,
       eventType: e.eventType,
       message: e.message,

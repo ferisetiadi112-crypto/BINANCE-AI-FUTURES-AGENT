@@ -10,10 +10,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchAgentStatus } from "@/api/client";
 import { MAX_AUTO_RETRIES } from "@/lib/fetch-timeout";
+import { AGENT_STATUS_QUERY_KEY } from "@/backend/api";
 
 export function useAgentStatus(refetchInterval = 5_000) {
   return useQuery({
-    queryKey: ["agent-status"],
+    queryKey: AGENT_STATUS_QUERY_KEY,
     queryFn: fetchAgentStatus,
     refetchInterval,
     retry: MAX_AUTO_RETRIES,

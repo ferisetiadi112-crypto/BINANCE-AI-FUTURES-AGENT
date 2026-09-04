@@ -135,9 +135,7 @@ function cloneEvent(e: RuntimeEvent): RuntimeEvent {
 let _orchestrator: TradingOrchestrator | null = null;
 let _intervalId: ReturnType<typeof setInterval> | null = null;
 let _positionMonitorId: ReturnType<typeof setInterval> | null = null;
-let _running = false;
-
-// ─── Runtime Loop ────────────────────────────────────────────────
+let _running = false;  // ─── Runtime Loop ────────────────────────────────────────────────
 
 async function tick(): Promise<void> {
   if (!_orchestrator) return;
@@ -272,6 +270,7 @@ async function tick(): Promise<void> {
     logger.error("trading-runtime", `Tick error: ${err}`);
   }
 }
+
 
 // ─── Position Monitor Loop (P4) ─────────────────────────────────
 

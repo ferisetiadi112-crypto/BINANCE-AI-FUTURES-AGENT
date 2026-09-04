@@ -1226,16 +1226,13 @@ export class TradingOrchestrator {
   }[]> {
     const symbols = await getEnabledSymbols();
 
-    // Sync balance ONCE per tick instead of once per symbol.
-    // On failure, fall back to per-symbol sync inside processMarketUpdate
-    // (preserves the original fail-closed behavior for direct symbol errors).
-    let balanceSynced = true;
-    try {
-      await this.syncAccountBalance();
-    } catch (err) {
-      balanceSynced = false;
-      logger.error("orchestrator", `Tick-level balance sync failed: ${err}`);
-    }
+    // Sync balance ONCE per tick, before processing any symbols.
+    // Previously each enabled symbol called syncBalance() inside
+    // processMarketUpdate() — identical logic and fail-closed behavior,
+    // but 12x the signed Binance REST calls per tick in TESTNET mode.
+    await this.syncAccountBalance().catch((err) => {
+      logger.warn("orchestrator", `Tick-level balance sync failed: ${err}`);
+    });
 
     const results: {
       symbol: string;
@@ -1260,8 +1257,11 @@ export class TradingOrchestrator {
           continue;
         }
 
+        // Balance sync is now handled once-per-tick above.
+        // Callers that need per-symbol sync (tests, diagnostics) still
+        // invoke processMarketUpdate() directly without skipBalanceSync.
         const result = await this.processMarketUpdate(marketState, {
-          skipBalanceSync: balanceSynced,
+          skipBalanceSync: true,
         });
         results.push({ symbol: s.symbol, result, reason: "OK" });
       } catch (err) {

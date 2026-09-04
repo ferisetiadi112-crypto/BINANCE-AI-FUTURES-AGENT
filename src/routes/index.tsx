@@ -19,6 +19,10 @@ export const Route = createFileRoute("/")({
 /**
  * Main monitoring screen — a lightweight window into the AI.
  *
+ * Renders immediately; a small "Connecting..." state appears only while
+ * the first agent-status query is in flight. No cinematic boot sequence,
+ * no artificial 1-12s wait, no long animation before useful content.
+ *
  * ONE query (agent-status, every 5s) replaces the previous six-query
  * dashboard. The endpoint reads in-memory runtime state only: no
  * database queries, no Binance REST calls, no full journal history.

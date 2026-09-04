@@ -11,7 +11,7 @@
 
 import { createServerFn } from "@tanstack/react-start";
 export { getDiagnostic } from "./diagnostic";
-export { getAgentStatus } from "./agent-status";
+export { getAgentStatus, AGENT_STATUS_QUERY_KEY } from "./agent-status";
 export type { AgentStatusPayload } from "./agent-status";
 import {
   fetchDashboard,

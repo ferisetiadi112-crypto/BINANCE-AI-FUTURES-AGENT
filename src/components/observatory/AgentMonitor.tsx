@@ -14,6 +14,10 @@
  *
  * Pure, prop-driven. One small status payload in, plain rows out.
  * All advanced detail stays on the existing advanced/debug pages.
+ *
+ * Renders immediately; a small "Connecting..." state appears only while
+ * the first agent-status query is in flight. No cinematic boot sequence,
+ * no artificial 1-12s wait, no long animation before useful content.
  */
 
 import { AlertTriangle } from "lucide-react";
