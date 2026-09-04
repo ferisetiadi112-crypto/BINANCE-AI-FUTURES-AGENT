@@ -48,6 +48,7 @@ import {
 import { getReviews } from "../journal/post-trade-review";
 import { getOrchestrator } from "../trading/runtime";
 import { getExchangeSnapshot } from "../exchange/unified-state";
+import { buildTestnetDiagnostics } from "../diagnostics/testnet-diagnostics";
 import {
   getMarketSnapshot as getMarketDataStateSnapshot,
   type SymbolMarketTick,
@@ -325,6 +326,13 @@ export const getAuditTrail = createServerFn({ method: "GET" }).handler(async () 
 // P7D-3: Now includes open orders from Binance Futures Testnet
 
 export const getTestnetStatus = createServerFn({ method: "GET" }).handler(async () => {
+  // Phase 3.5-E: READ-ONLY runtime diagnostics proving production can reach
+  // Binance Futures TESTNET (credentials presence → authenticated → balance →
+  // positions → open orders → market → testnet-only protection).
+  // Strictly no trading: the diagnostics builder only calls existing GET
+  // methods on the existing client and never mutates anything.
+  const diagnostics = await buildTestnetDiagnostics();
+
   // P7D-5.1: Read from unified exchange state (cached, WebSocket-updated)
   // instead of making fresh REST calls to Binance on every request.
   const snapshot = getExchangeSnapshot();
@@ -388,6 +396,8 @@ export const getTestnetStatus = createServerFn({ method: "GET" }).handler(async 
   }
 
   return wrap({
+    // Phase 3.5-E: safe diagnostics block (credential booleans only — never values)
+    diagnostics,
     configured: snapshot.configured,
     connected: snapshot.connected,
     // P7D-5.5: full account surface from the unified snapshot (single source)

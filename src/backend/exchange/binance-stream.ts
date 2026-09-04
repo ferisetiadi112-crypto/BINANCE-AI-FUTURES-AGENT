@@ -70,7 +70,7 @@ export type StreamMessage = TickerMessage | KlineMessage;
 const DEFAULT_CONFIG: Required<StreamConfig> = {
   symbols: ["BTCUSDT"],
   intervals: ["15m"],
-  baseUrl: "wss://fstream.binance.com",
+  baseUrl: "wss://fstream.binancefuture.com",
   reconnectBaseMs: 1000,
   reconnectMaxMs: 30000,
   pingIntervalMs: 30000,
