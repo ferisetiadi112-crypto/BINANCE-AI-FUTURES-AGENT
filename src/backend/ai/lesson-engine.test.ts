@@ -41,6 +41,12 @@ const createMockExperience = (overrides: Partial<TradeExperience> = {}): TradeEx
 });
 
 describe("Lesson Engine", () => {
+  // Run-unique suffix so lessons derived in one test run are not treated
+  // as duplicates of lessons stored by a previous run (Phase 3 dedupe).
+  const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  // Small per-run variation seed so lesson statistics (and therefore lesson
+  // text) differ between runs and are not flagged as duplicates.
+  const seed = parseInt(runId.replace(/\D/g, "").slice(-2), 10) || 7;
   beforeEach(async () => {
     // Create test database if needed
     // Note: lesson-engine uses its own database connection
@@ -58,13 +64,13 @@ describe("Lesson Engine", () => {
       const experiences = Array.from({ length: 10 }, (_, i) =>
         createMockExperience({
           id: `EXP-${i}`,
-          marketRegime: "TRENDING_UP",
+          marketRegime: `TRENDING_UP-${runId}`,
           outcome: i < 8 ? "WIN" : "LOSS", // 80% win rate
           netPnl: i < 8 ? 0.05 : -0.03,
         })
       );
 
-      const lessons = await deriveLessons(experiences, 5);
+      const lessons = await deriveLessons(experiences, 5, { dedupe: false });
       expect(lessons.length).toBeGreaterThan(0);
 
       // Should have a regime lesson
@@ -79,13 +85,13 @@ describe("Lesson Engine", () => {
       const experiences = Array.from({ length: 10 }, (_, i) =>
         createMockExperience({
           id: `EXP-${i}`,
-          strategy: "MOMENTUM",
+          strategy: `MOMENTUM-${runId}`,
           outcome: i < 7 ? "WIN" : "LOSS", // 70% win rate
           netPnl: i < 7 ? 0.04 : -0.02,
         })
       );
 
-      const lessons = await deriveLessons(experiences, 5);
+      const lessons = await deriveLessons(experiences, 5, { dedupe: false });
       const strategyLesson = lessons.find(l => l.category === "STRATEGY");
       expect(strategyLesson).toBeDefined();
       expect(strategyLesson!.text).toContain("MOMENTUM");
@@ -93,15 +99,18 @@ describe("Lesson Engine", () => {
 
     it("derives confidence-based lessons", async () => {
       // Create 10 high confidence experiences
-      const experiences = Array.from({ length: 10 }, (_, i) =>
+      const n = 10 + (seed % 7); // 10-16 trades → varied count & rate per run
+      const winCount = Math.ceil(n * 0.7);
+      const experiences = Array.from({ length: n }, (_, i) =>
         createMockExperience({
-          id: `EXP-${i}`,
-          confidence: 0.8,
-          outcome: i < 7 ? "WIN" : "LOSS", // 70% win rate
+          id: `EXP-${i}-${runId}`,
+          confidence: 0.8 + (i % 3) * 0.01,
+          outcome: i < winCount ? "WIN" : "LOSS",
+          marketRegime: `TRENDING_UP-${runId}`,
         })
       );
 
-      const lessons = await deriveLessons(experiences, 5);
+      const lessons = await deriveLessons(experiences, 5, { dedupe: false });
       const confidenceLesson = lessons.find(l => l.category === "CONFIDENCE");
       expect(confidenceLesson).toBeDefined();
       expect(confidenceLesson!.text).toContain("High confidence");
@@ -109,18 +118,21 @@ describe("Lesson Engine", () => {
 
     it("derives risk lessons from NO_TRADE decisions", async () => {
       // Create experiences with some NO_TRADE decisions
+      const lossCount = 3 + (seed % 4); // varied trade count per run
+      const noTradeCount = 3 + (seed % 4); // varied no-trade count per run
       const experiences = [
-        ...Array.from({ length: 5 }, (_, i) =>
+        ...Array.from({ length: lossCount }, (_, i) =>
           createMockExperience({
-            id: `EXP-TRADE-${i}`,
+            id: `EXP-TRADE-${i}-${runId}`,
             direction: "LONG",
             outcome: "LOSS",
             netPnl: -0.03,
+            marketRegime: `TRENDING_UP-${runId}`,
           })
         ),
-        ...Array.from({ length: 5 }, (_, i) =>
+        ...Array.from({ length: noTradeCount }, (_, i) =>
           createMockExperience({
-            id: `EXP-NO-${i}`,
+            id: `EXP-NO-${i}-${runId}`,
             direction: "NO_TRADE",
             outcome: "NO_TRADE_SKIPPED",
             tradeId: null,
@@ -131,11 +143,12 @@ describe("Lesson Engine", () => {
             slippage: null,
             grossPnl: null,
             netPnl: null,
+            marketRegime: `TRENDING_UP-${runId}`,
           })
         ),
       ];
 
-      const lessons = await deriveLessons(experiences, 5);
+      const lessons = await deriveLessons(experiences, 5, { dedupe: false });
       const riskLesson = lessons.find(l => l.category === "RISK");
       expect(riskLesson).toBeDefined();
     });
@@ -145,21 +158,23 @@ describe("Lesson Engine", () => {
       const experiences = [
         ...Array.from({ length: 3 }, (_, i) =>
           createMockExperience({
-            id: `EXP-WIN-${i}`,
+            id: `EXP-WIN-${i}-${runId}`,
             outcome: "WIN",
-            duration: 1800000, // 30 min wins
+            duration: (20 + (seed % 20)) * 60000, // varied win duration per run
+            marketRegime: `TRENDING_UP-${runId}`,
           })
         ),
         ...Array.from({ length: 3 }, (_, i) =>
           createMockExperience({
-            id: `EXP-LOSS-${i}`,
+            id: `EXP-LOSS-${i}-${runId}`,
             outcome: "LOSS",
-            duration: 7200000, // 2 hour losses
+            duration: (90 + (seed % 30)) * 60000, // varied loss duration per run
+            marketRegime: `TRENDING_UP-${runId}`,
           })
         ),
       ];
 
-      const lessons = await deriveLessons(experiences, 5);
+      const lessons = await deriveLessons(experiences, 5, { dedupe: false });
       const timingLesson = lessons.find(l => l.category === "TIMING");
       expect(timingLesson).toBeDefined();
       expect(timingLesson!.text).toContain("time-based exits");
@@ -175,7 +190,7 @@ describe("Lesson Engine", () => {
           outcome: i < 8 ? "WIN" : "LOSS",
         })
       );
-      await deriveLessons(experiences, 5);
+      await deriveLessons(experiences, 5, { dedupe: false });
 
       const lessons = await getRecentLessons(10);
       expect(lessons.length).toBeGreaterThan(0);

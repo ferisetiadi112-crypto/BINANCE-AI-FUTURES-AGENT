@@ -49,10 +49,44 @@ export type Lesson = {
 
 let lessonCycle = 0;
 
+/**
+ * Phase 3: Normalize lesson text for duplicate detection.
+ * Lessons that say the same thing should not accumulate in memory.
+ */
+export function normalizeLessonText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\d+\.\d+/g, (m) => String(Math.round(parseFloat(m))))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Phase 3: Check whether an equivalent lesson already exists in memory.
+ * Returns true when a stored lesson has the same normalized text.
+ */
+export async function isDuplicateLesson(text: string): Promise<boolean> {
+  try {
+    const rows = await dbQuery(
+      `SELECT text FROM ai_lessons ORDER BY created_at DESC LIMIT 100`,
+    );
+    const normalized = normalizeLessonText(text);
+    return rows.some((row) => normalizeLessonText(row['text'] as string) === normalized);
+  } catch (error) {
+    // On DB failure, assume not a duplicate (fail open for learning;
+    // persistence errors are logged separately and never affect trading).
+    logger.warn("lesson-engine", `Duplicate check failed: ${error}`);
+    return false;
+  }
+}
+
 export async function deriveLessons(
   recentExperiences: TradeExperience[],
   minExperiences: number = 5,
+  /** Phase 3: tests may disable the stored-memory duplicate check for determinism. */
+  options?: { dedupe?: boolean },
 ): Promise<Lesson[]> {
+  const dedupe = options?.dedupe !== false;
   const lessons: Lesson[] = [];
 
   if (recentExperiences.length < minExperiences) {
@@ -85,17 +119,32 @@ export async function deriveLessons(
   const timingLessons = deriveTimingLessons(recentExperiences);
   lessons.push(...timingLessons);
 
-  // Persist lessons
+  // Phase 3: persist only NEW (non-duplicate) lessons; skip duplicates.
+  // The result is the set of lessons actually stored — empty means
+  // "no reliable new lesson identified", which is the honest outcome.
+  const stored: Lesson[] = [];
   for (const lesson of lessons) {
+    if (dedupe && (await isDuplicateLesson(lesson.text))) {
+      logger.info("lesson-engine", `Skipping duplicate lesson: ${lesson.text.slice(0, 60)}...`);
+      continue;
+    }
     await persistLesson(lesson);
+    stored.push(lesson);
   }
 
-  logger.info(
-    "lesson-engine",
-    `Derived ${lessons.length} lessons from ${recentExperiences.length} experiences (cycle ${lessonCycle})`
-  );
+  if (stored.length === 0) {
+    logger.info(
+      "lesson-engine",
+      `No reliable new lesson identified from ${recentExperiences.length} experiences (cycle ${lessonCycle})`
+    );
+  } else {
+    logger.info(
+      "lesson-engine",
+      `Derived ${stored.length} lessons from ${recentExperiences.length} experiences (cycle ${lessonCycle})`
+    );
+  }
 
-  return lessons;
+  return stored;
 }
 
 // ─── Regime-Based Lessons ───────────────────────────────────────────

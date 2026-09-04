@@ -86,6 +86,8 @@ import {
   recordPositionMonitor,
   recordPnlUpdated,
   recordRiskLocked,
+  recordLessonStored,
+  recordNoReliableLesson,
   recordStartupReconciliation,
 } from "../journal";
 import { generatePostTradeReview } from "../journal/post-trade-review";
@@ -563,13 +565,22 @@ export class TradingOrchestrator {
       await recordTradeExperience(decision, marketState, trade, riskResult);
     }
 
-    // 7. Derive Lessons periodically (every 10 actual experiences)
+    // 7. Derive Lessons periodically (every 10 actual experiences).
+    // Phase 3: only non-duplicate, evidence-backed lessons are stored;
+    // an empty result is recorded honestly, never fabricated.
     this.experienceCount++;
     if (this.experienceCount % 10 === 0) {
       try {
         const recentExperiences = await getRecentExperiences(50);
-        if (recentExperiences.length > 0) {
-          await deriveLessons(recentExperiences);
+        if (recentExperiences.length >= 5) {
+          const stored = await deriveLessons(recentExperiences);
+          if (stored.length > 0) {
+            recordLessonStored(stored.length, stored[0]!.cycle);
+          } else {
+            recordNoReliableLesson(recentExperiences.length);
+          }
+        } else {
+          recordNoReliableLesson(recentExperiences.length);
         }
       } catch (err) {
         logger.error("orchestrator", `Lesson derivation failed: ${err}`);
@@ -937,13 +948,21 @@ export class TradingOrchestrator {
       await recordTradeExperience(decision, marketState, trade, riskResult);
     }
 
-    // 7. Derive Lessons periodically
+    // 7. Derive Lessons periodically. Phase 3: only non-duplicate,
+    // evidence-backed lessons are stored; empty result recorded honestly.
     this.experienceCount++;
     if (this.experienceCount % 10 === 0) {
       try {
         const recentExperiences = await getRecentExperiences(50);
-        if (recentExperiences.length > 0) {
-          await deriveLessons(recentExperiences);
+        if (recentExperiences.length >= 5) {
+          const stored = await deriveLessons(recentExperiences);
+          if (stored.length > 0) {
+            recordLessonStored(stored.length, stored[0]!.cycle);
+          } else {
+            recordNoReliableLesson(recentExperiences.length);
+          }
+        } else {
+          recordNoReliableLesson(recentExperiences.length);
         }
       } catch (err) {
         logger.error("orchestrator", `Lesson derivation failed: ${err}`);

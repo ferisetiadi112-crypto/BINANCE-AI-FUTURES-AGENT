@@ -56,7 +56,8 @@ export type JournalEventType =
   | "TAKE_PROFIT"
   | "PNL_UPDATED"
   | "RISK_LOCKED"
-  | "STARTUP_RECONCILIATION";
+  | "STARTUP_RECONCILIATION"
+  | "LEARNING";
 
 export type JournalImportance = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
@@ -534,6 +535,35 @@ export function recordStartupReconciliation(
  * Get all journal events (bounded buffer).
  * NOTE: For persistent read, use getRecentJournalEventsFromDB() instead.
  */
+/**
+ * Phase 3: Record that a valuable lesson was stored in memory.
+ * One concise event per derivation run that produced new lessons —
+ * never per-experience journal spam. Learning details stay in the
+ * learning/memory system, not in the journal feed.
+ */
+export function recordLessonStored(count: number, cycle: number): JournalEvent {
+  return recordJournalEvent({
+    eventType: "LEARNING",
+    importance: "LOW",
+    message: count === 1 ? "Learning: new lesson stored" : `Learning: ${count} new lessons stored`,
+    action: `lesson-derivation cycle ${cycle}`,
+  });
+}
+
+/**
+ * Phase 3: Record that a derivation run found no reliable new lesson.
+ * Honest state — recorded at LOW importance so it never clutters
+ * meaningful activity, but the absence of learning is visible.
+ */
+export function recordNoReliableLesson(experienceCount: number): JournalEvent {
+  return recordJournalEvent({
+    eventType: "LEARNING",
+    importance: "LOW",
+    message: "Learning: no reliable lesson identified",
+    action: `${experienceCount} experiences evaluated, insufficient evidence for a new lesson`,
+  });
+}
+
 export function getJournalEvents(): JournalEvent[] {
   return [..._events];
 }
