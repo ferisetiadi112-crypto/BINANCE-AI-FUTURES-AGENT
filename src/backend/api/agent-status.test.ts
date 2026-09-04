@@ -8,7 +8,12 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { buildAgentStatus, AGENT_ACTIVITY_LIMIT } from "./agent-status";
+import {
+  buildAgentStatus,
+  AGENT_ACTIVITY_LIMIT,
+  buildJournalEntries,
+  parseTradeProposed,
+} from "./agent-status";
 import { TradingOrchestrator } from "../trading/orchestrator";
 import type { RuntimeSnapshot } from "../trading/runtime";
 import type { MarketState } from "../runtime/types";
@@ -195,5 +200,102 @@ describe("buildAgentStatus", () => {
     });
     expect(s.recentActivity.length).toBe(AGENT_ACTIVITY_LIMIT);
     expect(s.recentActivity[0]!.message).toContain("Market scan");
+  });
+});
+
+describe("buildJournalEntries — completed work only", () => {
+  const now = Date.now();
+
+  const ev = (
+    eventType: string,
+    message: string,
+    ageSec: number,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    timestamp: now - ageSec * 1000,
+    eventType,
+    message,
+    ...extra,
+  });
+
+  it("keeps outcome events as journal entries", () => {
+    const entries = buildJournalEntries([
+      ev("TRADE_OPENED", "Position opened: LONG BTCUSDT @ $63000.00", 60, {
+        symbol: "BTCUSDT",
+        action: "Position opened via paper engine",
+        position: { symbol: "BTCUSDT", side: "LONG", entryPrice: 63000, margin: 5, leverage: 5 },
+      }),
+    ]);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.eventType).toBe("TRADE_OPENED");
+    expect(entries[0]!.symbol).toBe("BTCUSDT");
+    expect(entries[0]!.position?.entryPrice).toBe(63000);
+  });
+
+  it("never turns internal/system events into journal entries", () => {
+    const entries = buildJournalEntries([
+      ev("MARKET_SCAN", "Market scan: BTCUSDT (quality: GOOD)", 10),
+      ev("RISK_CHECK", "Risk check: LONG BTCUSDT — APPROVED: ok", 20),
+      ev("TRADE_APPROVED", "Trade approved: LONG BTCUSDT", 30),
+      ev("ORDER_SUBMITTED", "Order submitted: LONG 0.01 BTCUSDT", 40),
+      ev("PNL_UPDATED", "PnL updated: daily=$0.00", 50),
+      ev("POSITION_MONITOR", "Position monitor: BTCUSDT", 60),
+      ev("PERIODIC_REPORT", "Periodic report", 70),
+    ]);
+    expect(entries.length).toBe(0);
+  });
+
+  it("collapses TRADE_PROPOSED into its outcome — one activity, one entry", () => {
+    const entries = buildJournalEntries([
+      ev("TRADE_PROPOSED", "Trade proposed: LONG BTCUSDT (72.5% confidence, MOMENTUM)", 120),
+      ev("TRADE_OPENED", "Position opened: LONG BTCUSDT @ $63000.00", 60, {
+        symbol: "BTCUSDT",
+      }),
+    ]);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.eventType).toBe("TRADE_OPENED");
+  });
+
+  it("keeps a standalone TRADE_PROPOSED with no following outcome (WAIT decision)", () => {
+    const entries = buildJournalEntries([
+      ev("TRADE_PROPOSED", "Trade proposed: NO_TRADE ETHUSDT (31.0% confidence, TREND)", 45),
+    ]);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.decision).toBe("WAIT");
+    expect(entries[0]!.symbol).toBe("ETHUSDT");
+  });
+
+  it("caps entries at the journal limit, newest first", () => {
+    const activity = Array.from({ length: 20 }, (_, i) =>
+      ev("TRADE_CLOSED", `Position closed #${i}`, i * 10, { symbol: "BTCUSDT", pnl: i }),
+    );
+    const entries = buildJournalEntries(activity);
+    expect(entries.length).toBeLessThanOrEqual(6);
+  });
+
+  it("parses real direction/symbol embedded by recordTradeProposed()", () => {
+    expect(parseTradeProposed("Trade proposed: LONG BTCUSDT (72.5% confidence, M)"))?.toEqual({
+      direction: "LONG",
+      symbol: "BTCUSDT",
+    });
+    expect(parseTradeProposed("Trade proposed: NO_TRADE ETHUSDT (31.0% confidence, T)"))?.toEqual({
+      direction: "WAIT",
+      symbol: "ETHUSDT",
+    });
+    expect(parseTradeProposed("Position opened: LONG BTCUSDT")).toBeNull();
+  });
+
+  it("surfaces the derived journal on the agent-status payload", () => {
+    const s = buildAgentStatus({
+      ...baseInput,
+      orchestrator: null,
+      runtimeRunning: false,
+      activity: [
+        ev("TRADE_OPENED", "Position opened: LONG BTCUSDT", 60, { symbol: "BTCUSDT" }),
+        ev("RISK_CHECK", "Risk check: LONG BTCUSDT — APPROVED", 90),
+      ],
+    });
+    expect(s.journal.length).toBe(1);
+    expect(s.journal[0]!.eventType).toBe("TRADE_OPENED");
   });
 });

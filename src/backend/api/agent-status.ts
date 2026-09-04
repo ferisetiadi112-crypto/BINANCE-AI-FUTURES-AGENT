@@ -62,14 +62,130 @@ export type AgentStatusPayload = {
   tradeCountToday: number;
   lastUpdate: string | null;
   error: string | null;
-  recentActivity: Array<{
-    timestamp: number;
-    eventType: string;
-    message: string;
-  }>;
+  recentActivity: AgentActivityItem[];
+  /** Completed meaningful AI work only — internal/system events never appear. */
+  journal: JournalEntryLite[];
 };
 
 export const AGENT_ACTIVITY_LIMIT = 10;
+
+/**
+ * One real journal event as surfaced to the client. All fields come from
+ * the existing in-memory JournalEvent — nothing is invented here.
+ */
+export type AgentActivityItem = {
+  timestamp: number;
+  eventType: string;
+  message: string;
+  symbol?: string;
+  action?: string;
+  pnl?: number;
+  position?: {
+    symbol: string;
+    side: string;
+    entryPrice: number;
+    margin: number;
+    leverage: number;
+  };
+};
+
+/**
+ * One completed AI activity = one journal entry. Built purely from real
+ * journal events: outcome events stand alone; a TRADE_PROPOSED step is
+ * collapsed into its outcome when one follows for the same symbol, so a
+ * single decision cycle never produces two entries.
+ */
+export type JournalEntryLite = {
+  timestamp: number;
+  eventType: string;
+  symbol: string | null;
+  message: string;
+  /** LONG / SHORT / WAIT — only when the real event carries a direction. */
+  decision: string | null;
+  /** What actually happened (real event action text). */
+  action: string | null;
+  pnl: number | null;
+  position: AgentActivityItem["position"] | null;
+};
+
+/** Outcome events — each is a completed activity and becomes a journal entry. */
+const JOURNAL_OUTCOME_EVENTS: ReadonlySet<string> = new Set([
+  "TRADE_OPENED",
+  "POSITION_OPENED",
+  "TRADE_CLOSED",
+  "POSITION_CLOSED",
+  "TRADE_REJECTED",
+  "POST_TRADE_REVIEW",
+  "STOP_LOSS",
+  "TAKE_PROFIT",
+]);
+
+export const JOURNAL_ENTRY_LIMIT = 6;
+
+/** A proposal older than this window before its outcome is treated as separate. */
+const ACTIVITY_COLLAPSE_WINDOW_MS = 10 * 60_000;
+
+const TRADE_PROPOSED_RE = /^Trade proposed: (LONG|SHORT|NO_TRADE|NO TRADE) ([A-Z0-9]+)/;
+
+/** Extract the real direction/symbol embedded by recordTradeProposed(). */
+export function parseTradeProposed(
+  message: string,
+): { direction: string; symbol: string } | null {
+  const m = TRADE_PROPOSED_RE.exec(message);
+  if (!m) return null;
+  const direction = m[1] === "NO_TRADE" || m[1] === "NO TRADE" ? "WAIT" : m[1]!;
+  return { direction, symbol: m[2]! };
+}
+
+function toJournalEntry(a: AgentActivityItem): JournalEntryLite {
+  const proposed = parseTradeProposed(a.message);
+  return {
+    timestamp: a.timestamp,
+    eventType: a.eventType,
+    symbol: a.symbol ?? proposed?.symbol ?? null,
+    message: a.message,
+    decision: proposed?.direction ?? null,
+    action: a.action ?? null,
+    pnl: typeof a.pnl === "number" ? a.pnl : null,
+    position: a.position ?? null,
+  };
+}
+
+/**
+ * Derive journal entries (completed work only) from the capped in-memory
+ * activity buffer. Pure function — exported for tests.
+ */
+export function buildJournalEntries(activity: AgentActivityItem[]): JournalEntryLite[] {
+  const lastOutcomeAt = new Map<string, number>();
+  const entries: JournalEntryLite[] = [];
+
+  const newestFirst = [...activity].sort((a, b) => b.timestamp - a.timestamp);
+  for (const a of newestFirst) {
+    if (JOURNAL_OUTCOME_EVENTS.has(a.eventType)) {
+      const sym = a.symbol ?? null;
+      if (sym) {
+        const prev = lastOutcomeAt.get(sym) ?? 0;
+        if (a.timestamp > prev) lastOutcomeAt.set(sym, a.timestamp);
+      }
+      entries.push(toJournalEntry(a));
+      continue;
+    }
+    if (a.eventType === "TRADE_PROPOSED") {
+      // Collapsed when its outcome (opened/rejected) already appears newer
+      // for the same symbol — one activity, one entry.
+      const sym = a.symbol ?? parseTradeProposed(a.message)?.symbol ?? null;
+      const outcomeAt = sym ? (lastOutcomeAt.get(sym) ?? 0) : 0;
+      const superseded =
+        outcomeAt > a.timestamp && outcomeAt - a.timestamp <= ACTIVITY_COLLAPSE_WINDOW_MS;
+      if (!superseded) entries.push(toJournalEntry(a));
+      continue;
+    }
+    // MARKET_SCAN, RISK_CHECK, TRADE_APPROVED, ORDER_SUBMITTED, monitors,
+    // PnL updates and other internal/system events never become entries.
+  }
+
+  return entries.slice(0, JOURNAL_ENTRY_LIMIT);
+}
 
 // ─── Pure builder (exported for tests) ─────────────────────────────
 
@@ -117,6 +233,7 @@ export function buildAgentStatus(input: {
       lastUpdate: null,
       error: runtimeInitError,
       recentActivity: activity,
+      journal: buildJournalEntries(activity),
     };
   }
 
@@ -218,6 +335,7 @@ export function buildAgentStatus(input: {
     lastUpdate: lastUpdateMs > 0 ? new Date(lastUpdateMs).toISOString() : null,
     error,
     recentActivity: activity,
+    journal: buildJournalEntries(activity),
   };
 }
 
@@ -228,10 +346,24 @@ export const getAgentStatus = createServerFn({ method: "GET" }).handler(
     const orchestrator = getOrchestrator();
     // Lightweight: latest 10 in-memory events only, never the full journal.
     const latest = getRecentJournalEvents(AGENT_ACTIVITY_LIMIT);
-    const activity = latest.map((e) => ({
+    const activity: AgentActivityItem[] = latest.map((e) => ({
       timestamp: e.timestamp,
       eventType: e.eventType,
       message: e.message,
+      ...(e.symbol ? { symbol: e.symbol } : {}),
+      ...(e.action ? { action: e.action } : {}),
+      ...(typeof e.pnl === "number" ? { pnl: e.pnl } : {}),
+      ...(e.position
+        ? {
+            position: {
+              symbol: e.position.symbol,
+              side: e.position.side,
+              entryPrice: e.position.entryPrice,
+              margin: e.position.margin,
+              leverage: e.position.leverage,
+            },
+          }
+        : {}),
     }));
     const payload = buildAgentStatus({
       orchestrator,
