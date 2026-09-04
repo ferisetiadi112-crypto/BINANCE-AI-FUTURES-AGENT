@@ -137,6 +137,39 @@ describe("Trading Orchestrator", () => {
     });
   });
 
+  describe("processRealtimeUpdate — balance sync hoisted to once per tick", () => {
+    it("syncs balance exactly once per tick even with many enabled symbols", async () => {
+      const spy = vi.spyOn(dataAdapter, "generateRealtimeMarketState").mockReturnValue(trendingUpState);
+      const balanceSpy = vi.spyOn(orchestrator, "syncAccountBalance");
+
+      const results = await orchestrator.processRealtimeUpdate();
+      const okCount = results.filter((r) => r.reason === "OK").length;
+
+      expect(okCount).toBeGreaterThan(1); // multiple symbols really processed
+      expect(balanceSpy).toHaveBeenCalledTimes(1);
+      spy.mockRestore();
+    });
+
+    it("direct processMarketUpdate calls still sync balance on demand", async () => {
+      const balanceSpy = vi.spyOn(orchestrator, "syncAccountBalance");
+
+      await orchestrator.processMarketUpdate(trendingUpState);
+
+      expect(balanceSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("risk engine receives the synced wallet balance for decisions", async () => {
+      const spy = vi.spyOn(dataAdapter, "generateRealtimeMarketState").mockReturnValue(trendingUpState);
+
+      await orchestrator.processRealtimeUpdate();
+
+      // walletRepository.getBalance was mocked to 5.0 — the risk engine
+      // must see exactly that balance after the hoisted sync.
+      expect(orchestrator.getRiskEngine().getWalletBalance()).toBe(5.0);
+      spy.mockRestore();
+    });
+  });
+
   describe("processRealtimeUpdate — F-1 remediation", () => {
     let spy: ReturnType<typeof vi.spyOn>;
 

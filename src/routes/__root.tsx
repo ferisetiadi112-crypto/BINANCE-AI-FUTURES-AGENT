@@ -7,10 +7,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { SystemBoot } from "@/components/SystemBoot";
-
-const BOOT_STORAGE_KEY = "orbital_system_booted";
+import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -93,7 +90,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:title", content: "Orbital AI — Futures Trading Command Center" },
       {
         property: "og:description",
-        content: "Deep-space AI trading dashboard concept with analytics, strategy and risk panels.",
+        content:
+          "Deep-space AI trading dashboard concept with analytics, strategy and risk panels.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -132,29 +130,8 @@ function RootShell({ children }: { children: ReactNode }) {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
-  // P7D-4.5: Boot screen state
-  // On first entry (no sessionStorage flag) → show boot screen
-  // On refresh (flag exists) → skip boot, show app directly
-  const [booted, setBooted] = useState(() => {
-    try {
-      return sessionStorage.getItem(BOOT_STORAGE_KEY) === "true";
-    } catch {
-      return false;
-    }
-  });
-
-  const handleBootReady = useCallback(() => {
-    try {
-      sessionStorage.setItem(BOOT_STORAGE_KEY, "true");
-    } catch {
-      // sessionStorage unavailable
-    }
-    setBooted(true);
-  }, []);
-
-  if (!booted) {
-    return <SystemBoot onReady={handleBootReady} />;
-  }
+  // No artificial boot gate: the app renders immediately and each screen
+  // shows its own small "Connecting..." state while data initializes.
 
   return (
     <QueryClientProvider client={queryClient}>

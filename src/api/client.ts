@@ -44,6 +44,7 @@ import {
   getDiagnostic,
   getAiLogbook,
   getSystemReadiness,
+  getAgentStatus,
 } from "../backend/api";
 import type { ApiResponse } from "../types/api";
 import {
@@ -161,7 +162,11 @@ export async function fetchFeedStatus() {
 // ─── Market Snapshot (Phase 8D) ────────────────────────────────────
 
 export async function fetchMarketSnapshot(symbol: string) {
-  const result = await withTimeout("market-snapshot", getMarketSnapshot({ data: symbol }), BUDGET_FAST_MS);
+  const result = await withTimeout(
+    "market-snapshot",
+    getMarketSnapshot({ data: symbol }),
+    BUDGET_FAST_MS,
+  );
   return result as ApiResponse<any>;
 }
 
@@ -189,7 +194,11 @@ export async function walletTopUp(amount: number, note?: string) {
 export async function walletWithdraw(amount: number, note?: string) {
   const payload: { amount: number; note?: string } = { amount };
   if (note !== undefined) payload.note = note;
-  const result = await withTimeout("wallet-withdraw", withdrawFromWallet({ data: payload }), BUDGET_FAST_MS);
+  const result = await withTimeout(
+    "wallet-withdraw",
+    withdrawFromWallet({ data: payload }),
+    BUDGET_FAST_MS,
+  );
   return result as ApiResponse<any>;
 }
 
@@ -209,7 +218,11 @@ export async function fetchTestnetStatus() {
 }
 
 export async function syncTestnetBalanceAction() {
-  const result = await withTimeout("testnet-sync-balance", syncTestnetBalance(), BUDGET_EXCHANGE_MS);
+  const result = await withTimeout(
+    "testnet-sync-balance",
+    syncTestnetBalance(),
+    BUDGET_EXCHANGE_MS,
+  );
   return result as ApiResponse<any>;
 }
 
@@ -246,7 +259,11 @@ export async function fetchOrchestratorData() {
 // ─── AI Logbook (P7D-4) ──────────────────────────────────────────
 
 export async function fetchAiLogbook(includeNoise = false) {
-  const result = await withTimeout("ai-logbook", getAiLogbook({ data: { includeNoise } }), BUDGET_FAST_MS);
+  const result = await withTimeout(
+    "ai-logbook",
+    getAiLogbook({ data: { includeNoise } }),
+    BUDGET_FAST_MS,
+  );
   return result as ApiResponse<any>;
 }
 
@@ -262,4 +279,13 @@ export async function fetchDiagnostic() {
 export async function fetchSystemReadiness() {
   const result = await withTimeout("system-readiness", getSystemReadiness(), BUDGET_BOOT_MS);
   return result as ApiResponse<any>;
+}
+
+// ─── Agent Status (lightweight monitor) ──────────────────────────
+// Single aggregate for the main monitoring screen. In-memory only —
+// no database queries, no Binance REST calls.
+
+export async function fetchAgentStatus() {
+  const result = await withTimeout("agent-status", getAgentStatus(), BUDGET_FAST_MS);
+  return result as ApiResponse<import("../backend/api").AgentStatusPayload>;
 }

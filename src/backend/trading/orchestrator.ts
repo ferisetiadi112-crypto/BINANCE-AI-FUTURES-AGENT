@@ -123,6 +123,7 @@ export class TradingOrchestrator {
   private riskEngine: RiskEngine;
   private paperEngine: PaperTradingEngine;
   private testnetExecutor: TestnetExecutor | null;
+  private lastSyncedWalletBalance = 0;
   private state: OrchestratorState;
   private decisionHistory: AiDecision[] = [];
   private maxHistory = 100;
@@ -353,7 +354,10 @@ export class TradingOrchestrator {
 
   // ─── Process Market Update ───────────────────────────────────────
 
-  async processMarketUpdate(marketState: MarketState): Promise<{
+  async processMarketUpdate(
+    marketState: MarketState,
+    options?: { skipBalanceSync?: boolean },
+  ): Promise<{
     decision: AiDecision;
     riskResult: { approved: boolean; reason: string };
     trade: PaperTrade | null;
@@ -365,27 +369,12 @@ export class TradingOrchestrator {
     this.state.marketState = marketState;
     this.state.feedStatus = marketState.feedStatus;
 
-    // P7A: Sync REAL Binance Futures balance to Risk Engine in TESTNET mode.
-    // In PAPER mode, use sandbox wallet. In TESTNET, Binance is source of truth.
-    let walletBalance: number;
-    if (this.executionMode === "TESTNET" && this.testnetExecutor && this.state.testnetReady) {
-      try {
-        const realBalance = await this.testnetExecutor.syncBalance();
-        walletBalance = realBalance;
-        this.riskEngine.setEffectiveAllocationLimit(realBalance);
-      } catch (err) {
-        logger.warn("orchestrator", `Failed to sync real Futures balance: ${err}`);
-        walletBalance = 0;
-        this.riskEngine.setEffectiveAllocationLimit(0); // Fail closed
-        // P7C: Track sync failure in connection state
-        this.state.lastSyncAttempt = Date.now();
-        this.state.connectionError = err instanceof Error ? err.message : String(err);
-        this.state.consecutiveSyncFailures++;
-      }
-    } else {
-      walletBalance = await walletRepository.getBalance();
+    // Balance sync is hoisted to once-per-tick by processRealtimeUpdate().
+    // Direct callers (tests, diagnostics) still sync on demand by default.
+    if (!options?.skipBalanceSync) {
+      await this.syncAccountBalance();
     }
-    this.riskEngine.setWalletBalance(walletBalance);
+    const walletBalance = this.lastSyncedWalletBalance;
 
     // Record market scan event
     recordMarketScan(marketState.symbol, marketState.dataQuality);
@@ -1193,6 +1182,38 @@ export class TradingOrchestrator {
 
   // ─── Real-Time Processing ───────────────────────────────────────
 
+  /**
+   * Synchronize the account balance with the Risk Engine ONCE per tick.
+   *
+   * Previously this ran inside processMarketUpdate() for every enabled
+   * symbol (12x per tick in TESTNET mode, each a signed Binance REST call
+   * plus DB writes). Identical logic and fail-closed behavior — hoisted.
+   */
+  async syncAccountBalance(): Promise<void> {
+    // P7A: Sync REAL Binance Futures balance to Risk Engine in TESTNET mode.
+    // In PAPER mode, use sandbox wallet. In TESTNET, Binance is source of truth.
+    let walletBalance: number;
+    if (this.executionMode === "TESTNET" && this.testnetExecutor && this.state.testnetReady) {
+      try {
+        const realBalance = await this.testnetExecutor.syncBalance();
+        walletBalance = realBalance;
+        this.riskEngine.setEffectiveAllocationLimit(realBalance);
+      } catch (err) {
+        logger.warn("orchestrator", `Failed to sync real Futures balance: ${err}`);
+        walletBalance = 0;
+        this.riskEngine.setEffectiveAllocationLimit(0); // Fail closed
+        // P7C: Track sync failure in connection state
+        this.state.lastSyncAttempt = Date.now();
+        this.state.connectionError = err instanceof Error ? err.message : String(err);
+        this.state.consecutiveSyncFailures++;
+      }
+    } else {
+      walletBalance = await walletRepository.getBalance();
+    }
+    this.riskEngine.setWalletBalance(walletBalance);
+    this.lastSyncedWalletBalance = walletBalance;
+  }
+
   async processRealtimeUpdate(): Promise<{
     symbol: string;
     result: {
@@ -1204,6 +1225,18 @@ export class TradingOrchestrator {
     reason: string;
   }[]> {
     const symbols = await getEnabledSymbols();
+
+    // Sync balance ONCE per tick instead of once per symbol.
+    // On failure, fall back to per-symbol sync inside processMarketUpdate
+    // (preserves the original fail-closed behavior for direct symbol errors).
+    let balanceSynced = true;
+    try {
+      await this.syncAccountBalance();
+    } catch (err) {
+      balanceSynced = false;
+      logger.error("orchestrator", `Tick-level balance sync failed: ${err}`);
+    }
+
     const results: {
       symbol: string;
       result: {
@@ -1227,7 +1260,9 @@ export class TradingOrchestrator {
           continue;
         }
 
-        const result = await this.processMarketUpdate(marketState);
+        const result = await this.processMarketUpdate(marketState, {
+          skipBalanceSync: balanceSynced,
+        });
         results.push({ symbol: s.symbol, result, reason: "OK" });
       } catch (err) {
         logger.error("orchestrator", `Error processing ${s.symbol}: ${err}`);
