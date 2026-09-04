@@ -4,13 +4,14 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import {
   Activity,
   ArrowDownRight,
+  ArrowRight,
   ArrowUpRight,
   BrainCircuit,
-  CircleAlert,
+  CheckCircle2,
   Clock,
-  Cpu,
   Database,
   Gauge,
+  Lock,
   Radio,
   Search,
   Shield,
@@ -18,17 +19,12 @@ import {
   TrendingUp,
   Wallet,
   Zap,
-  Filter,
-  ArrowRight,
-  Lock,
-  Unlock,
   XCircle,
-  CheckCircle2,
   AlertTriangle,
   Timer,
   X,
 } from "lucide-react";
-import { PageHeader, Panel, Stat, Tag } from "@/components/space/Panel";
+import { PageHeader, Panel, Tag } from "@/components/space/Panel";
 import {
   fetchTestnetStatus,
   fetchRuntime,
@@ -38,18 +34,17 @@ import {
   fetchReviews,
   fetchOrchestratorData,
 } from "@/api/client";
-import type { JournalEventType, JournalImportance } from "@/backend/journal";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Command Deck — Orbital AI Futures Dashboard" },
+      { title: "AI Futures Trading Observatory — Orbital AI Command Center" },
       {
         name: "description",
         content:
-          "Real-time AI trading agent monitoring — Binance Testnet account, positions, orders, PnL, risk state, and AI Decision Journal.",
+          "AI futures trading observatory — Binance Futures Testnet command center with real-time positions, risk state, and AI intelligence.",
       },
-      { property: "og:title", content: "Command Deck — Orbital AI Futures Dashboard" },
+      { property: "og:title", content: "AI Futures Trading Observatory — Orbital AI Command Center" },
     ],
   }),
   component: Dashboard,
@@ -109,10 +104,14 @@ const IMPORTANCE_TONE: Record<string, "gain" | "loss" | "warn" | "cyan" | "defau
   CRITICAL: "loss",
 };
 
+// ─── Position State Type ────────────────────────────────────────────
+
+type PositionState = "LOADING" | "NO_POSITION" | "LONG" | "SHORT" | "ERROR";
+
 // ─── Dashboard ──────────────────────────────────────────────────────
 
 function Dashboard() {
-  const { data: testnetResp } = useQuery({
+  const { data: testnetResp, isError: testnetError } = useQuery({
     queryKey: ["testnet-status"],
     queryFn: fetchTestnetStatus,
     refetchInterval: 10_000,
@@ -148,26 +147,42 @@ function Dashboard() {
 
   const testnet = testnetResp?.data;
   const runtime = runtimeResp?.data;
-  const system = systemResp?.data;
   const health = healthResp?.data;
   const journal = journalResp?.data;
   const reviews = reviewsResp?.data;
   const orch = orchResp?.data;
   const riskState = orch?.account?.riskState;
   const account = orch?.account?.binanceAccount;
-  const aiAllocation = orch?.account?.aiAllocation;
   const positions = orch?.account?.openPositions || [];
   const events: JournalEvent[] = journal?.events || [];
   const aiReviews = reviews?.reviews || [];
 
   const isConnected = testnet?.connected;
   const executionMode = orch?.executionMode || "PAPER";
+  const aiRunning = !!orch?.running;
+
+  // ── Determine position state ──
+  let positionState: PositionState = "LOADING";
+  if (testnetError || (testnetResp && !testnet)) {
+    positionState = "ERROR";
+  } else if (testnetResp) {
+    // We have testnet data — check positions
+    if (positions.length > 0) {
+      positionState = positions[0].side === "LONG" ? "LONG" : "SHORT";
+    } else if (testnet.connected) {
+      positionState = "NO_POSITION";
+    } else {
+      positionState = "NO_POSITION";
+    }
+  }
+
+  const firstPosition = positions[0] || null;
 
   // ── Loading state ──
   if (!orch && !runtime) {
     return (
       <div className="mx-auto max-w-[110rem]">
-        <PageHeader eyebrow="Sector 07 · Command Deck" title="Loading..." desc="Connecting to trading system..." />
+        <PageHeader eyebrow="System · Observatory" title="Loading..." desc="Connecting to trading system..." />
         <div className="flex items-center justify-center py-20">
           <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
           <span className="ml-3 font-mono text-sm text-muted-foreground">Initializing systems...</span>
@@ -175,16 +190,6 @@ function Dashboard() {
       </div>
     );
   }
-
-  const systemStatus = riskState?.isLocked
-    ? riskState.hardCapReached
-      ? "LOCKED"
-      : riskState.cooldownActive
-        ? "COOLDOWN"
-        : "LOCKED"
-    : orch?.running
-      ? "AI ACTIVE"
-      : "OFFLINE";
 
   const runtimeEvents = runtime?.recentEvents || [];
   const lastEvent = runtimeEvents[runtimeEvents.length - 1];
@@ -201,223 +206,134 @@ function Dashboard() {
   return (
     <div className="mx-auto max-w-[110rem]">
       <PageHeader
-        eyebrow="Sector 07 · Command Deck"
+        eyebrow="ORBITAL ·AI"
         title="AI Futures Trading Observatory"
-        desc={
-          executionMode === "TESTNET"
-            ? "BINANCE FUTURES TESTNET — Real account data from Binance Testnet"
-            : "PAPER TRADING MODE — Simulated data"
-        }
-        right={
-          <div className="panel corner-ticks flex items-center gap-3 px-4 py-2.5">
-            <span className={`pulse-dot h-2 w-2 rounded-full ${isConnected ? "bg-gain" : "bg-loss"}`} />
-            <div>
-              <div className="label-mono">System Status</div>
-              <div className={`font-mono text-sm font-semibold ${systemStatus === "AI ACTIVE" ? "text-gain glow-text" : systemStatus === "COOLDOWN" ? "text-amber-signal" : systemStatus === "LOCKED" ? "text-loss" : "text-muted-foreground"}`}>
-                {systemStatus}
-              </div>
-            </div>
-            <div className="ml-3 border-l border-hairline pl-3">
-              <div className="label-mono">Mode</div>
-              <div className={`font-mono text-sm ${executionMode === "TESTNET" ? "text-gain" : "text-primary"}`}>
-                {executionMode}
-              </div>
-            </div>
-          </div>
-        }
+        desc="BINANCE FUTURES TESTNET — AI COMMAND CENTER"
       />
 
-      {/* ── System Status Bar ───────────────────────────────────────── */}
-      <Panel title="System Status" code="OBSERVATORY" glow>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <StatusIndicator label="Binance Testnet" state={isConnected ? "CONNECTED" : "OFFLINE"} />
-          <StatusIndicator label="Database" state={health?.status === "healthy" ? "NEON POSTGRESQL" : "OFFLINE"} />
-          <StatusIndicator label="AI Engine" state={orch?.running ? "ACTIVE" : "INACTIVE"} />
-          <StatusIndicator label="Risk Engine" state={riskState?.isLocked ? "LOCKED" : "PROTECTED"} />
-          <StatusIndicator label="Journal" state="ACTIVE" />
-          <StatusIndicator label="Execution" state={executionMode} />
-        </div>
-        {riskState?.isLocked && (
-          <div className="mt-3 flex items-center gap-3 rounded-sm border border-loss/40 bg-loss/5 px-4 py-2">
-            <Lock className="h-4 w-4 text-loss" />
-            <div>
-              <span className="font-mono text-xs font-semibold text-loss">
-                {riskState.hardCapReached ? "HARD PROFIT CAP REACHED" : riskState.cooldownActive ? "COOLDOWN ACTIVE" : "TRADING LOCKED"}
-              </span>
-              <span className="ml-2 font-mono text-xs text-muted-foreground">
-                {riskState.lockReason || "Unknown reason"}
-              </span>
-            </div>
-          </div>
-        )}
-      </Panel>
-
-      {/* ── Account Overview + AI Allocation ────────────────────────── */}
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        <Panel title="Testnet Account" code="BINANCE FUTURES" glow action={<Tag tone={isConnected ? "gain" : "loss"}>{isConnected ? "CONNECTED" : "OFFLINE"}</Tag>}>
-          {account ? (
-            <div className="space-y-3">
-              <Stat label="Wallet Balance" value={money(account.balance)} icon={<Wallet className="h-4 w-4" />} />
-              <div className="grid grid-cols-2 gap-2">
-                <MiniStat label="Available Balance" value={money(account.availableBalance)} />
-                <MiniStat label="Margin Balance" value={money(account.marginBalance)} />
-                <MiniStat label="Unrealized PnL" value={money(account.unrealizedPnl)} tone={account.unrealizedPnl >= 0 ? "gain" : "loss"} />
-                {account?.realizedPnl != null ? (
-                  <MiniStat label="Realized PnL" value={money(account.realizedPnl)} tone={account.realizedPnl >= 0 ? "gain" : "loss"} />
-                ) : (
-                  <MiniStat label="Realized PnL" value="—" />
-                )}
+      {/* ═══ A. CORE SYSTEM STATUS — Top priority ═══════════════════ */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {/* Binance Futures Testnet */}
+        <div className={`panel corner-ticks px-4 py-3 ${isConnected ? "panel-glow" : ""}`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-sm border ${
+                isConnected
+                  ? "border-gain/50 bg-gain/10"
+                  : "border-loss/50 bg-loss/10"
+              }`}>
+                <Gauge className={`h-5 w-5 ${isConnected ? "text-gain" : "text-loss"}`} />
+                {isConnected && <span className="pulse-dot absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-gain" />}
               </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <Database className="mb-3 h-8 w-8 text-muted-foreground/40" />
-              <div className="font-mono text-sm text-muted-foreground">
-                {isConnected ? "Account data loading..." : "BINANCE TESTNET OFFLINE"}
-              </div>
-              <div className="mt-1 font-mono text-[0.65rem] text-muted-foreground/60">
-                {isConnected ? "Waiting for first data fetch" : "Configure Testnet credentials in Settings"}
-              </div>
-            </div>
-          )}
-        </Panel>
-
-        <Panel title="AI Capital Allocation" code="$10 USDT MAX" glow>
-          {aiAllocation ? (
-            aiAllocation.accountAvailable ? (
-              <div className="space-y-3">
-                <div className="flex items-end justify-between">
-                  <div>
-                    <div className="label-mono">AI Allocation Limit (hard max)</div>
-                    <div className="mt-1 font-mono text-3xl font-semibold text-primary glow-text">
-                      {money(aiAllocation.limit)}
-                    </div>
-                  </div>
-                  <BrainCircuit className="h-6 w-6 text-primary/60" />
+              <div>
+                <div className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-muted-foreground">
+                  BINANCE FUTURES TESTNET
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <MiniStat label="Effective Allocation" value={money(aiAllocation.effectiveAllocation)} tone="gain" />
-                  <MiniStat label="Allocated" value={money(aiAllocation.allocated)} />
-                  <MiniStat label="Remaining" value={money(aiAllocation.available)} tone="gain" />
-                  <MiniStat label="Account Source" value="BINANCE TESTNET" />
-                </div>
-                <GaugeBar
-                  label="Allocated"
-                  used={aiAllocation.allocated}
-                  cap={aiAllocation.effectiveAllocation}
-                  tone="primary"
-                />
-                <div className="rounded-sm border border-hairline bg-muted/30 px-3 py-2">
-                  <span className="font-mono text-[0.65rem] text-muted-foreground">
-                    Effective allocation = min(Binance Futures available balance, ${aiAllocation.limit}). This is the AI trading limit, NOT the wallet balance.
+                <div className="mt-0.5 flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${isConnected ? "bg-gain shadow-[0_0_6px_oklch(0.8_0.18_158_/_60%)]" : "bg-loss"}`} />
+                  <span className={`font-mono text-sm font-bold uppercase tracking-wider ${isConnected ? "text-gain glow-text" : "text-loss"}`}>
+                    {isConnected ? "CONNECTED" : "OFFLINE"}
                   </span>
                 </div>
               </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <BrainCircuit className="mb-3 h-8 w-8 text-muted-foreground/40" />
-                <div className="font-mono text-sm text-muted-foreground">ALLOCATION DATA UNAVAILABLE</div>
-                <div className="mt-1 font-mono text-[0.65rem] text-muted-foreground/60">
-                  Binance Futures Testnet account state unavailable — effective allocation is $0.00 (fail closed). No simulated balance is substituted.
-                </div>
-              </div>
-            )
-          ) : (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <BrainCircuit className="mb-3 h-8 w-8 text-muted-foreground/40" />
-              <div className="font-mono text-sm text-muted-foreground">Allocation data loading...</div>
             </div>
-          )}
-        </Panel>
-      </div>
-
-      {/* ── Active Position ─────────────────────────────────────────── */}
-      <div className="mt-3">
-        <Panel
-          title="Active Position"
-          code={positions.length > 0 ? "OPEN" : "NONE"}
-          action={positions.length > 0 ? <Tag tone="gain">OPEN</Tag> : undefined}
-          glow={positions.length > 0}
-        >
-          {positions.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="border-b border-hairline">
-                    {["Symbol", "Side", "Size", "Entry", "Mark", "Margin", "Leverage", "Margin Mode", "Unrealized PnL"].map((h) => (
-                      <th key={h} className="label-mono px-3 py-2 text-left font-normal text-[0.65rem]">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {positions.map((p: any, i: number) => (
-                    <tr key={`${p.symbol}-${i}`} className="border-b border-hairline/60 hover:bg-primary/5">
-                      <td className="px-3 py-2 font-mono text-xs font-semibold text-foreground">{p.symbol}</td>
-                      <td className="px-3 py-2">
-                        <Tag tone={p.side === "LONG" ? "gain" : "violet"}>{p.side}</Tag>
-                      </td>
-                      <td className="px-3 py-2 font-mono text-xs text-foreground">{p.size}</td>
-                      <td className="px-3 py-2 font-mono text-xs tabular-nums text-foreground">{money(p.entryPrice)}</td>
-                      <td className="px-3 py-2 font-mono text-xs tabular-nums text-foreground">{money(p.markPrice)}</td>
-                      <td className="px-3 py-2 font-mono text-xs tabular-nums text-foreground">{money(p.margin)}</td>
-                      <td className="px-3 py-2 font-mono text-xs text-foreground">{p.leverage}x</td>
-                      <td className="px-3 py-2">
-                        <Tag tone={p.marginType === "isolated" ? "gain" : p.marginType === "cross" ? "loss" : "violet"}>
-                          {p.marginType === "isolated" ? "ISOLATED" : p.marginType === "cross" ? "CROSS" : "—"}
-                        </Tag>
-                      </td>
-                      <td className={`px-3 py-2 font-mono text-xs tabular-nums font-semibold ${p.unrealizedPnl >= 0 ? "text-gain" : "text-loss"}`}>
-                        {money(p.unrealizedPnl)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="flex items-center justify-center py-6 text-center">
-              <div>
-                <div className="font-mono text-sm text-muted-foreground">NO ACTIVE POSITION</div>
-                <div className="mt-1 font-mono text-[0.65rem] text-muted-foreground/60">AI is monitoring market conditions</div>
-              </div>
-            </div>
-          )}
-        </Panel>
-      </div>
-
-      {/* ── Risk State + AI Activity ────────────────────────────────── */}
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        <Panel title="Risk State" code="GUARDIAN" action={<Tag tone={riskState?.isLocked ? "loss" : "gain"}>{riskState?.isLocked ? "LOCKED" : "PROTECTED"}</Tag>}>
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-2">
-              <MiniStat label="Session PnL" value={money(riskState?.sessionPnl || 0)} tone={(riskState?.sessionPnl || 0) >= 0 ? "gain" : "loss"} />
-              <MiniStat label="Daily PnL" value={money(riskState?.dailyPnl || 0)} tone={(riskState?.dailyPnl || 0) >= 0 ? "gain" : "loss"} />
-              <MiniStat label="Session Target" value="+$0.50" />
-              <MiniStat label="Hard Cap" value="+$2.00" />
-              <MiniStat label="Max Loss/Trade" value="$1.00" />
-              <MiniStat label="Max Leverage" value="20x" />
-              <MiniStat label="Max Positions" value="1" />
-              <MiniStat label="Daily Loss Limit" value="-$2.00" />
-            </div>
-            {riskState?.cooldownActive && (
-              <div className="rounded-sm border border-amber-signal/40 bg-amber-signal/5 px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <Timer className="h-4 w-4 text-amber-signal" />
-                  <div>
-                    <div className="font-mono text-xs font-semibold text-amber-signal">COOLDOWN ACTIVE</div>
-                    {riskState.cooldownEndsAt && (
-                      <div className="font-mono text-[0.65rem] text-muted-foreground">
-                        Expires: {new Date(riskState.cooldownEndsAt).toLocaleTimeString()}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
+            <Tag tone={isConnected ? "gain" : "loss"}>
+              {executionMode}
+            </Tag>
           </div>
+        </div>
+
+        {/* AI Engine */}
+        <div className={`panel corner-ticks px-4 py-3 ${aiRunning ? "panel-glow" : ""}`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-sm border ${
+                aiRunning
+                  ? "border-primary/50 bg-primary/10"
+                  : "border-loss/50 bg-loss/10"
+              }`}>
+                <BrainCircuit className={`h-5 w-5 ${aiRunning ? "text-primary" : "text-loss"}`} />
+                {aiRunning && <span className="pulse-dot absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-primary" />}
+              </div>
+              <div>
+                <div className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-muted-foreground">
+                  AI ENGINE
+                </div>
+                <div className="mt-0.5 flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${aiRunning ? "bg-gain shadow-[0_0_6px_oklch(0.8_0.18_158_/_60%)]" : "bg-loss"}`} />
+                  <span className={`font-mono text-sm font-bold uppercase tracking-wider ${aiRunning ? "text-gain glow-text" : "text-loss"}`}>
+                    {aiRunning ? "ONLINE" : "OFFLINE"}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <Tag tone={aiRunning ? "gain" : "loss"}>
+              {aiActivity}
+            </Tag>
+          </div>
+        </div>
+      </div>
+
+      {/* Risk Lock Banner */}
+      {riskState?.isLocked && (
+        <div className="mt-3 flex items-center gap-3 rounded-sm border border-loss/40 bg-loss/5 px-4 py-2">
+          <Lock className="h-4 w-4 text-loss" />
+          <div>
+            <span className="font-mono text-xs font-semibold text-loss">
+              {riskState.hardCapReached ? "HARD PROFIT CAP REACHED" : riskState.cooldownActive ? "COOLDOWN ACTIVE" : "TRADING LOCKED"}
+            </span>
+            <span className="ml-2 font-mono text-xs text-muted-foreground">
+              {riskState.lockReason || "Unknown reason"}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ B. ACTIVE POSITION — Second priority ═══════════════════ */}
+      <div className="mt-3">
+        <ActivePositionPanel
+          state={positionState}
+          position={firstPosition}
+          positionCount={positions.length}
+          isConnected={isConnected}
+          totalUnrealizedPnl={positions.reduce((a: number, p: any) => a + p.unrealizedPnl, 0)}
+        />
+      </div>
+
+      {/* ═══ C. ACCOUNT / TRADING STATE ═════════════════════════════ */}
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        <Panel title="Account" code="BINANCE FUTURES" glow>
+          {account ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <MiniStat label="Balance" value={money(account.balance)} />
+                <MiniStat label="Available" value={money(account.availableBalance)} />
+                <MiniStat label="Margin Used" value={money(account.marginBalance)} />
+                <MiniStat
+                  label="Unrealized PnL"
+                  value={money(account.unrealizedPnl)}
+                  tone={account.unrealizedPnl >= 0 ? "gain" : "loss"}
+                />
+              </div>
+              <div className="flex items-center gap-3 border-t border-hairline pt-2">
+                <Tag tone="gain">TESTNET</Tag>
+                <span className="font-mono text-[0.65rem] text-muted-foreground">
+                  Trading Mode: {executionMode} — AI has restricted allocation
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-6 text-center">
+              <Database className="mb-2 h-6 w-6 text-muted-foreground/40" />
+              <div className="font-mono text-xs text-muted-foreground">
+                {isConnected ? "Account data loading..." : "BINANCE TESTNET OFFLINE"}
+              </div>
+            </div>
+          )}
         </Panel>
 
-        <Panel title="AI Current Activity" code="LIVE" glow action={<Tag tone="cyan">{aiActivity}</Tag>}>
+        {/* AI Activity */}
+        <Panel title="AI Activity" code="ENGINE" glow action={<Tag tone="cyan">{aiActivity}</Tag>}>
           <div className="space-y-3">
             <div className="flex items-center gap-3 rounded-sm border border-primary/30 bg-primary/5 px-4 py-3">
               <BrainCircuit className="h-5 w-5 text-primary" />
@@ -425,31 +341,55 @@ function Dashboard() {
                 <div className="font-mono text-sm font-semibold text-primary">{aiActivity}</div>
                 <div className="font-mono text-[0.65rem] text-muted-foreground">
                   {lastEvent
-                    ? `Last event: ${lastEvent.symbol} (${fmtTime(lastEvent.timestamp)})`
-                    : "Waiting for events..."}
+                    ? `Last decision: ${lastEvent.symbol} — ${fmtTime(lastEvent.timestamp)}`
+                    : "Waiting for market data..."}
                 </div>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <MiniStat label="Execution Mode" value={executionMode} />
               <MiniStat label="Testnet Ready" value={orch?.testnetReady ? "YES" : "NO"} />
-              <MiniStat label="Runtime Tick" value={String(runtime?.stats?.tickCount || 0)} />
+              <MiniStat label="Runtime Ticks" value={String(runtime?.stats?.tickCount || 0)} />
               <MiniStat label="Processed" value={String(runtime?.stats?.totalProcessed || 0)} />
             </div>
           </div>
         </Panel>
       </div>
 
-      {/* ── AI Decision Journal ──────────────────────────────────────── */}
+      {/* ═══ D. RISK STATE — Compact supporting info ═════════════════ */}
       <div className="mt-3">
-        <JournalPanel events={events} />
+        <Panel title="Risk State" code="GUARDIAN" action={<Tag tone={riskState?.isLocked ? "loss" : "gain"}>{riskState?.isLocked ? "LOCKED" : "PROTECTED"}</Tag>}>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            <MiniStat label="Risk Status" value={riskState?.isLocked ? "LOCKED" : "NOMINAL"} tone={riskState?.isLocked ? "loss" : "gain"} />
+            <MiniStat label="Max Loss/Trade" value="$1.00" />
+            <MiniStat label="Daily Loss Limit" value="-$2.00" />
+            <MiniStat label="Max Leverage" value="20x" />
+            <MiniStat label="Max Positions" value="1" />
+            <MiniStat
+              label="Daily PnL"
+              value={money(riskState?.dailyPnl || 0)}
+              tone={(riskState?.dailyPnl || 0) >= 0 ? "gain" : "loss"}
+            />
+          </div>
+          {riskState?.cooldownActive && (
+            <div className="mt-3 flex items-center gap-2 rounded-sm border border-amber-signal/40 bg-amber-signal/5 px-3 py-2">
+              <Timer className="h-3.5 w-3.5 text-amber-signal" />
+              <span className="font-mono text-xs font-semibold text-amber-signal">COOLDOWN ACTIVE</span>
+              {riskState.cooldownEndsAt && (
+                <span className="font-mono text-[0.65rem] text-muted-foreground">
+                  Expires: {new Date(riskState.cooldownEndsAt).toLocaleTimeString()}
+                </span>
+              )}
+            </div>
+          )}
+        </Panel>
       </div>
 
-      {/* ── Last AI Decision + Last Trade ─────────────────────────── */}
+      {/* ═══ E. LAST AI DECISION ═════════════════════════════════════ */}
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <Panel title="Last AI Decision" code="DECISION">
           {runtimeEvents.length > 0 ? (
-            <div className="space-y-3">
+            <div className="space-y-2">
               <div className="rounded-sm border border-hairline bg-muted/30 p-3">
                 <div className="flex items-center justify-between">
                   <Tag tone={lastEvent?.executionResult === "TESTNET_EXECUTED" ? "gain" : lastEvent?.executionResult === "REJECTED" ? "loss" : "default"}>
@@ -462,19 +402,17 @@ function Dashboard() {
                   <MiniStat label="Decision" value={lastEvent?.decision || "—"} />
                   <MiniStat label="Confidence" value={lastEvent?.confidence ? `${(lastEvent.confidence * 100).toFixed(1)}%` : "—"} />
                   <MiniStat label="Strategy" value={lastEvent?.strategy || "—"} />
-                  <MiniStat label="Risk" value={lastEvent?.riskApproved ? "APPROVED" : "REJECTED"} tone={lastEvent?.riskApproved ? "gain" : "loss"} />
-                  <MiniStat label="Reason" value={lastEvent?.riskReason || "—"} />
                 </div>
               </div>
             </div>
           ) : (
-            <div className="py-6 text-center font-mono text-sm text-muted-foreground">No decisions yet</div>
+            <div className="py-4 text-center font-mono text-sm text-muted-foreground">No decisions yet</div>
           )}
         </Panel>
 
         <Panel title="Post-Trade Reviews" code="REVIEWS">
           {aiReviews.length > 0 ? (
-            <div className="space-y-2 max-h-[280px] overflow-y-auto">
+            <div className="max-h-[220px] space-y-2 overflow-y-auto">
               {aiReviews.slice(-5).reverse().map((r: any, i: number) => (
                 <div key={r.tradeId || i} className="rounded-sm border border-hairline bg-muted/30 p-3">
                   <div className="flex items-center justify-between">
@@ -486,27 +424,124 @@ function Dashboard() {
                       {money(r.realizedPnl)}
                     </span>
                   </div>
-                  <div className="mt-2 font-mono text-[0.65rem] text-muted-foreground">{r.potentialLesson}</div>
+                  <div className="mt-1 font-mono text-[0.65rem] text-muted-foreground">{r.potentialLesson}</div>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="py-6 text-center font-mono text-sm text-muted-foreground">No reviews yet</div>
+            <div className="py-4 text-center font-mono text-sm text-muted-foreground">No reviews yet</div>
           )}
         </Panel>
       </div>
 
-      {/* ── Connection Status ────────────────────────────────────────── */}
+      {/* ═══ F. JOURNAL — Secondary lower section ═══════════════════ */}
       <div className="mt-3 mb-6">
-        <div className="flex flex-wrap items-center justify-center gap-4 rounded-sm border border-primary/20 bg-primary/5 px-4 py-3">
-          <ConnectionDot label="Binance Testnet" connected={!!isConnected} />
-          <ConnectionDot label="Database" connected={health?.status === "healthy"} />
-          <ConnectionDot label="AI Engine" connected={!!orch?.running} />
-          <ConnectionDot label="Risk Engine" connected={!riskState?.isLocked || true} />
-          <ConnectionDot label="Journal" connected={true} />
-        </div>
+        <JournalPanel events={events} />
       </div>
     </div>
+  );
+}
+
+// ─── Active Position Panel ──────────────────────────────────────────
+
+function ActivePositionPanel({
+  state,
+  position,
+  positionCount,
+  isConnected,
+  totalUnrealizedPnl,
+}: {
+  state: PositionState;
+  position: any | null;
+  positionCount: number;
+  isConnected: boolean | undefined;
+  totalUnrealizedPnl: number;
+}) {
+  const isActive = state === "LONG" || state === "SHORT";
+
+  return (
+    <Panel
+      title="Active Position"
+      code={state === "LOADING" ? "LOADING" : state === "ERROR" ? "ERROR" : isActive ? "OPEN" : "NONE"}
+      glow={isActive}
+      action={
+        state === "LOADING" ? (
+          <Tag tone="cyan">LOADING</Tag>
+        ) : isActive ? (
+          <Tag tone="gain">OPEN</Tag>
+        ) : state === "ERROR" ? (
+          <Tag tone="loss">ERROR</Tag>
+        ) : undefined
+      }
+    >
+      {state === "LOADING" && (
+        <div className="flex items-center justify-center py-6">
+          <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
+          <span className="ml-3 font-mono text-sm text-muted-foreground">Fetching Binance position data...</span>
+        </div>
+      )}
+
+      {state === "ERROR" && (
+        <div className="flex flex-col items-center justify-center py-6 text-center">
+          <AlertTriangle className="mb-2 h-6 w-6 text-loss" />
+          <div className="font-mono text-sm font-semibold text-loss">DATA UNAVAILABLE</div>
+          <div className="mt-1 font-mono text-[0.65rem] text-muted-foreground">
+            Unable to fetch position data from Binance Futures Testnet.
+          </div>
+        </div>
+      )}
+
+      {state === "NO_POSITION" && (
+        <div className="flex items-center justify-center py-6 text-center">
+          <div>
+            <div className="font-mono text-sm font-semibold text-muted-foreground">NONE</div>
+            <div className="mt-1 font-mono text-[0.65rem] text-muted-foreground/60">
+              No active position — AI is monitoring market conditions.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isActive && position && (
+        <div>
+          {/* Position Header */}
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className={`flex h-8 items-center justify-center rounded-sm px-3 font-mono text-sm font-bold ${
+                state === "LONG"
+                  ? "border border-gain/40 bg-gain/10 text-gain"
+                  : "border border-violet-signal/40 bg-violet-signal/10 text-violet-signal"
+              }`}>
+                {state}
+              </span>
+              <span className="font-display text-lg font-bold text-foreground">{position.symbol}</span>
+            </div>
+            <div className={`font-mono text-lg font-bold tabular-nums ${totalUnrealizedPnl >= 0 ? "text-gain glow-text" : "text-loss"}`}>
+              {money(totalUnrealizedPnl)}
+            </div>
+          </div>
+
+          {/* Position Details */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            <MiniStat label="Entry Price" value={money(position.entryPrice)} />
+            <MiniStat label="Mark Price" value={money(position.markPrice)} />
+            <MiniStat label="Size" value={String(position.size)} />
+            <MiniStat label="Leverage" value={`${position.leverage}x`} />
+            <MiniStat label="Margin" value={money(position.margin)} />
+            <MiniStat
+              label="Unrealized PnL"
+              value={money(position.unrealizedPnl)}
+              tone={position.unrealizedPnl >= 0 ? "gain" : "loss"}
+            />
+          </div>
+          {positionCount > 1 && (
+            <div className="mt-2 font-mono text-[0.65rem] text-muted-foreground">
+              +{positionCount - 1} more position{positionCount > 2 ? "s" : ""}
+            </div>
+          )}
+        </div>
+      )}
+    </Panel>
   );
 }
 
@@ -556,8 +591,7 @@ function JournalPanel({ events }: { events: JournalEvent[] }) {
   return (
     <Panel
       title="AI Decision Journal"
-      code="LIVE"
-      glow
+      code="LOGBOOK"
       action={
         <div className="flex items-center gap-2">
           <Tag tone="cyan">LIVE FEED</Tag>
@@ -567,7 +601,7 @@ function JournalPanel({ events }: { events: JournalEvent[] }) {
     >
       {/* Filters */}
       <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-hairline pb-3">
-        <div className="relative flex-1 min-w-[180px]">
+        <div className="relative min-w-[180px] flex-1">
           <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
@@ -632,12 +666,12 @@ function JournalPanel({ events }: { events: JournalEvent[] }) {
           const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
           setAutoScroll(atBottom);
         }}
-        className="max-h-[500px] space-y-1 overflow-y-auto"
+        className="max-h-[400px] space-y-1 overflow-y-auto"
       >
         {filteredEvents.length > 0 ? (
           filteredEvents.map((event) => <JournalEntry key={event.id} event={event} />)
         ) : (
-          <div className="py-8 text-center">
+          <div className="py-6 text-center">
             <div className="font-mono text-sm text-muted-foreground">
               {events.length === 0 ? "No journal events yet" : "No events match filters"}
             </div>
@@ -692,56 +726,11 @@ function JournalEntry({ event }: { event: JournalEvent }) {
 
 // ─── Shared Components ──────────────────────────────────────────────
 
-function StatusIndicator({ label, state }: { label: string; state: string }) {
-  const isOk = state === "CONNECTED" || state === "ACTIVE" || state === "NEON POSTGRESQL" || state === "PROTECTED" || state === "PAPER" || state === "TESTNET";
-  return (
-    <div className="flex items-center gap-2 rounded-sm border border-hairline bg-muted/30 px-3 py-2">
-      <span className={`h-2 w-2 rounded-full ${isOk ? "bg-gain" : state === "LOCKED" || state === "COOLDOWN" ? "bg-amber-signal" : state === "INACTIVE" || state === "OFFLINE" ? "bg-loss" : "bg-gain"}`} />
-      <div>
-        <div className="label-mono text-[0.55rem]">{label}</div>
-        <div className="font-mono text-xs font-semibold text-foreground">{state}</div>
-      </div>
-    </div>
-  );
-}
-
 function MiniStat({ label, value, tone }: { label: string; value: string; tone?: "gain" | "loss" }) {
   return (
     <div className="rounded-sm border border-hairline bg-muted/30 px-3 py-2">
       <div className="label-mono text-[0.55rem]">{label}</div>
       <div className={`font-mono text-xs font-semibold ${tone === "gain" ? "text-gain" : tone === "loss" ? "text-loss" : "text-foreground"}`}>{value}</div>
-    </div>
-  );
-}
-
-function GaugeBar({ label, used, cap, tone }: { label: string; used: number; cap: number; tone: "primary" | "loss" | "cyan" }) {
-  const pct = cap > 0 ? Math.min((used / cap) * 100, 100) : 0;
-  return (
-    <div>
-      <div className="flex items-baseline justify-between">
-        <span className="label-mono">{label}</span>
-        <span className="font-mono text-[0.7rem] tabular-nums text-foreground">
-          {money(used)} / {money(cap)}
-        </span>
-      </div>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted/50">
-        <div
-          className={`h-full rounded-full transition-all ${
-            tone === "primary" ? "bg-primary" : tone === "loss" ? "bg-loss" : "bg-cyan-400"
-          }`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <div className="mt-1 font-mono text-[0.6rem] text-muted-foreground">{pct.toFixed(1)}% consumed</div>
-    </div>
-  );
-}
-
-function ConnectionDot({ label, connected }: { label: string; connected: boolean }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className={`h-2 w-2 rounded-full ${connected ? "bg-gain animate-pulse" : "bg-loss"}`} />
-      <span className="font-mono text-[0.65rem] text-muted-foreground">{label}</span>
     </div>
   );
 }

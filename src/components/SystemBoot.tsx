@@ -1,7 +1,10 @@
 /**
- * SystemBoot — P7D-4.6 Premium Cinematic Boot Screen
+ * SystemBoot — ORBITAL·AI Futures Command Boot Sequence
  *
- * AAA sci-fi command-system launch sequence for ORBITAL·AI Futures Command.
+ * Futuristic military/command-center boot screen focused on 2 core systems:
+ *   1. BINANCE FUTURES TESTNET
+ *   2. AI ENGINE
+ *
  * All readiness state, polling, and sessionStorage behavior are unchanged —
  * this is a presentation-layer redesign only.
  */
@@ -24,18 +27,15 @@ interface BootStage {
 
 const POLL_INTERVAL_MS = 1_500;
 const STORAGE_KEY = "orbital_system_booted";
-const SEGMENTS = 24;
+const SEGMENTS = 20;
 
-/** Stage progress weights — 5 stages, each worth 20%. */
-const STAGE_READY_WEIGHT = 20;
-const STAGE_ACTIVE_WEIGHT = 10;
+/** Stage progress weights — 2 stages, each worth 50%. */
+const STAGE_READY_WEIGHT = 50;
+const STAGE_ACTIVE_WEIGHT = 25;
 
 const BOOT_MESSAGES: Record<string, string> = {
-  database: "CONNECTING TO CORE...",
-  binance: "VERIFYING SYSTEM...",
-  "ai-runtime": "STARTING AI RUNTIME...",
-  "risk-engine": "CALIBRATING RISK ENGINE...",
-  dashboard: "SYNCHRONIZING COMMAND CENTER...",
+  binance: "ESTABLISHING TESTNET LINK...",
+  "ai-engine": "BOOTING AI CORE...",
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -60,18 +60,15 @@ interface SystemBootProps {
 
 export function SystemBoot({ onReady }: SystemBootProps) {
   const [stages, setStages] = useState<BootStage[]>([
-    { id: "database", label: "DATABASE", status: "WAITING" },
-    { id: "binance", label: "EXCHANGE LINK", status: "WAITING" },
-    { id: "ai-runtime", label: "AI CORE", status: "WAITING" },
-    { id: "risk-engine", label: "RISK ENGINE", status: "WAITING" },
-    { id: "dashboard", label: "COMMAND CENTER", status: "WAITING" },
+    { id: "binance", label: "BINANCE FUTURES TESTNET", status: "WAITING" },
+    { id: "ai-engine", label: "AI ENGINE", status: "WAITING" },
   ]);
   const [bootPhase, setBootPhase] = useState<"BOOTING" | "SYSTEM_READY" | "TRANSITIONING">("BOOTING");
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [introStep, setIntroStep] = useState(0); // cinematic intro: 0=frame,1=brand,2=core,3=bar,4=modules
+  const [introStep, setIntroStep] = useState(0);
 
-  // Cinematic intro sequence — pure presentation, does not affect readiness.
+  // Cinematic intro sequence
   useEffect(() => {
     const timers = [80, 300, 550, 750, 950].map((delay, i) =>
       setTimeout(() => setIntroStep(i + 1), delay),
@@ -90,7 +87,7 @@ export function SystemBoot({ onReady }: SystemBootProps) {
   const updateStage = useCallback(
     (id: string, status: StageStatus, message?: string) => {
       setStages((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, status, message } : s))
+        prev.map((s) => (s.id === id ? { ...s, status, message } : s)),
       );
     },
     [],
@@ -108,49 +105,24 @@ export function SystemBoot({ onReady }: SystemBootProps) {
         const data = resp?.data;
         if (!data) return;
 
-        // 1. DATABASE
-        if (data.databaseReady) {
-          updateStage("database", "READY", data.databaseConfigured ? "NEON POSTGRESQL" : "SQLite");
-        } else if (data.databaseConfigured) {
-          updateStage("database", "ACTIVE", "Menghubungkan database...");
-        } else {
-          updateStage("database", "READY", "SQLite (embedded)");
-        }
-
-        // 2. BINANCE
+        // 1. BINANCE FUTURES TESTNET
         if (!data.binanceConfigured) {
-          updateStage("binance", "READY", "PAPER MODE — Tidak dikonfigurasi");
+          updateStage("binance", "READY", "PAPER MODE — Not configured");
         } else if (data.binanceConnected) {
-          updateStage("binance", "READY", "Terkoneksi");
+          updateStage("binance", "READY", "CONNECTED");
         } else if (data.runtimeReady) {
-          updateStage("binance", "READY", data.executionMode === "PAPER" ? "PAPER MODE" : "Tidak terhubung");
+          updateStage("binance", "READY", data.executionMode === "PAPER" ? "PAPER MODE" : "Not connected");
         } else {
-          updateStage("binance", "ACTIVE", "Menghubungkan...");
+          updateStage("binance", "ACTIVE", "CONNECTING...");
         }
 
-        // 3. AI RUNTIME
+        // 2. AI ENGINE
         if (data.aiRuntimeOnline) {
-          updateStage("ai-runtime", "READY", "ONLINE");
+          updateStage("ai-engine", "READY", "ONLINE");
         } else if (data.runtimeReady) {
-          updateStage("ai-runtime", "READY", "Initialized");
+          updateStage("ai-engine", "READY", "INITIALIZED");
         } else {
-          updateStage("ai-runtime", "ACTIVE", "Starting...");
-        }
-
-        // 4. RISK ENGINE
-        if (data.riskEngineReady) {
-          updateStage("risk-engine", "READY", data.tradingEnabled ? "ACTIVE (Trading ON)" : "PROTECTED (Trading OFF)");
-        } else if (data.runtimeReady) {
-          updateStage("risk-engine", "READY", "PROTECTED");
-        } else {
-          updateStage("risk-engine", "ACTIVE", "Initializing...");
-        }
-
-        // 5. DASHBOARD
-        if (data.systemReady) {
-          updateStage("dashboard", "READY", "System ready");
-        } else {
-          updateStage("dashboard", "ACTIVE", "Preparing...");
+          updateStage("ai-engine", "ACTIVE", "INITIALIZING...");
         }
 
         // Check for errors
@@ -158,10 +130,9 @@ export function SystemBoot({ onReady }: SystemBootProps) {
           setError(data.error);
         }
 
-        // System fully ready
+        // System fully ready — gate on Binance + AI Engine
         if (data.systemReady) {
           setBootPhase("SYSTEM_READY");
-          // Brief pause then transition
           setTimeout(() => {
             if (!cancelled) {
               setStoredBootState(true);
@@ -186,7 +157,7 @@ export function SystemBoot({ onReady }: SystemBootProps) {
     };
   }, [updateStage, onReady]);
 
-  // ─── Derived presentation values (from REAL stage state only) ────
+  // ─── Derived presentation values ────
 
   const percent = stages.reduce((acc, s) => {
     if (s.status === "READY") return acc + STAGE_READY_WEIGHT;
@@ -198,12 +169,14 @@ export function SystemBoot({ onReady }: SystemBootProps) {
   const firstUnready = stages.find((s) => s.status !== "READY");
   const bootMessage =
     bootPhase === "SYSTEM_READY" || bootPhase === "TRANSITIONING"
-      ? "SYSTEM ONLINE — COMMAND CENTER READY"
+      ? "SYSTEMS ONLINE — COMMAND CENTER READY"
       : firstUnready
-        ? (BOOT_MESSAGES[firstUnready.id] ?? "INITIALIZING COMMAND SYSTEM")
-        : "INITIALIZING COMMAND SYSTEM";
+        ? (BOOT_MESSAGES[firstUnready.id] ?? "INITIALIZING...")
+        : "INITIALIZING...";
 
-  const coreOnline = stages.find((s) => s.id === "ai-runtime")?.status === "READY";
+  const bothOnline = stages.every((s) => s.status === "READY");
+
+  // ─── Render ────
 
   return (
     <div
@@ -214,7 +187,6 @@ export function SystemBoot({ onReady }: SystemBootProps) {
       {/* ── Ambient layers ─────────────────────────────────────── */}
       <div className="absolute inset-0 grid-field opacity-25" />
       <div className="absolute inset-0 pointer-events-none scanlines" />
-      {/* Soft emerald core halo behind center */}
       <div
         className="absolute left-1/2 top-1/2 h-[70vmin] w-[70vmin] -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-none"
         style={{
@@ -222,7 +194,6 @@ export function SystemBoot({ onReady }: SystemBootProps) {
             "radial-gradient(circle, oklch(0.78 0.19 158 / 9%) 0%, oklch(0.78 0.19 158 / 3%) 40%, transparent 70%)",
         }}
       />
-      {/* Vignette */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
@@ -231,22 +202,19 @@ export function SystemBoot({ onReady }: SystemBootProps) {
         }}
       />
 
-      {/* ── HUD frame — thin futuristic border lines ───────────── */}
+      {/* ── HUD frame ───────────────────────────────────────────── */}
       <div
         className={`absolute inset-3 sm:inset-5 pointer-events-none transition-opacity duration-700 ${
           introStep >= 1 ? "opacity-100" : "opacity-0"
         }`}
       >
         <div className="absolute inset-0 border border-primary/15" />
-        {/* Corner brackets */}
         <div className="absolute -top-px -left-px h-6 w-6 border-t-2 border-l-2 border-primary/70" />
         <div className="absolute -top-px -right-px h-6 w-6 border-t-2 border-r-2 border-primary/70" />
         <div className="absolute -bottom-px -left-px h-6 w-6 border-b-2 border-l-2 border-primary/70" />
         <div className="absolute -bottom-px -right-px h-6 w-6 border-b-2 border-r-2 border-primary/70" />
-        {/* Side notches */}
         <div className="absolute left-0 top-1/2 h-10 w-[3px] -translate-y-1/2 bg-primary/40" />
         <div className="absolute right-0 top-1/2 h-10 w-[3px] -translate-y-1/2 bg-primary/40" />
-        {/* Top HUD readouts */}
         <div className="absolute top-2 left-4 font-mono text-[0.5rem] uppercase tracking-[0.3em] text-cyan-signal/50">
           OBT-CMD // LAUNCH SEQ
         </div>
@@ -262,7 +230,7 @@ export function SystemBoot({ onReady }: SystemBootProps) {
       </div>
 
       {/* ── Content ────────────────────────────────────────────── */}
-      <div className="relative z-10 flex w-full max-w-sm flex-col items-center px-6">
+      <div className="relative z-10 flex w-full max-w-md flex-col items-center px-6">
         {/* Brand block */}
         <div
           className={`text-center transition-all duration-500 ${
@@ -281,23 +249,21 @@ export function SystemBoot({ onReady }: SystemBootProps) {
           </div>
         </div>
 
-        {/* ── AI CORE / reactor ─────────────────────────────────── */}
+        {/* ── Core reactor ─────────────────────────────────────── */}
         <div
           className={`relative my-6 sm:my-8 transition-all duration-700 ${
             introStep >= 3 ? "scale-100 opacity-100" : "scale-75 opacity-0"
           }`}
         >
-          {/* Outer glow */}
           <div
             className={`absolute -inset-6 rounded-full transition-opacity duration-1000 ${
-              coreOnline ? "opacity-100" : "opacity-50"
+              bothOnline ? "opacity-100" : "opacity-50"
             }`}
             style={{
               background:
                 "radial-gradient(circle, oklch(0.78 0.19 158 / 18%) 0%, transparent 65%)",
             }}
           />
-          {/* Slow rotating dashed ring */}
           <svg
             viewBox="0 0 100 100"
             className="absolute -inset-3 h-[calc(100%+24px)] w-[calc(100%+24px)] animate-spin"
@@ -310,7 +276,6 @@ export function SystemBoot({ onReady }: SystemBootProps) {
               strokeDasharray="4 6"
             />
           </svg>
-          {/* Counter-rotating inner ring with ticks */}
           <svg
             viewBox="0 0 100 100"
             className="absolute -inset-1 h-[calc(100%+8px)] w-[calc(100%+8px)] animate-spin"
@@ -323,7 +288,6 @@ export function SystemBoot({ onReady }: SystemBootProps) {
               strokeDasharray="1 9"
             />
           </svg>
-          {/* Core body */}
           <div
             className={`relative h-24 w-24 rounded-full border flex items-center justify-center transition-all duration-700 ${
               bootPhase === "SYSTEM_READY"
@@ -341,10 +305,8 @@ export function SystemBoot({ onReady }: SystemBootProps) {
               <span className="text-loss text-2xl">✕</span>
             ) : (
               <>
-                {/* Pulsing nucleus */}
                 <div className="absolute h-8 w-8 rounded-full bg-primary/80 animate-ping" style={{ animationDuration: "2.2s" }} />
                 <div className="relative h-8 w-8 rounded-full bg-primary shadow-[0_0_18px_oklch(0.86_0.19_158_/_80%)] animate-pulse" />
-                {/* Internal energy swirl */}
                 <div
                   className="absolute inset-2 rounded-full border border-transparent border-t-primary/60 border-r-cyan-signal/40 animate-spin"
                   style={{ animationDuration: "1.8s" }}
@@ -382,33 +344,45 @@ export function SystemBoot({ onReady }: SystemBootProps) {
           </div>
         </div>
 
-        {/* ── HUD telemetry ─────────────────────────────────────── */}
+        {/* ── Core System Status — 2 systems only ───────────────── */}
         <div
-          className={`mt-5 w-full transition-all duration-500 ${
+          className={`mt-6 w-full transition-all duration-500 ${
             introStep >= 5 ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
           }`}
         >
-          <div className="space-y-1">
+          <div className="space-y-2">
             {stages.map((stage) => (
-              <div key={stage.id} className="flex items-center gap-2 font-mono text-[0.62rem] tracking-[0.15em]">
-                <span className="w-32 truncate text-muted-foreground/70 uppercase">
-                  {stage.label}
-                </span>
-                <span className="flex-1 border-b border-dotted border-hairline/40" />
-                {stage.status === "READY" ? (
-                  <span className="flex items-center gap-1.5 text-primary">
-                    <span className="text-[0.7rem]">●</span> ONLINE
+              <div
+                key={stage.id}
+                className="rounded-sm border border-primary/20 bg-primary/5 px-4 py-3 transition-colors"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-xs font-semibold uppercase tracking-[0.15em] text-foreground/90">
+                    {stage.label}
                   </span>
-                ) : stage.status === "ERROR" ? (
-                  <span className="flex items-center gap-1.5 text-loss">
-                    <span className="text-[0.7rem]">✕</span> FAULT
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1.5 text-cyan-signal/80">
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-cyan-signal animate-pulse" />
-                    CONNECTING...
-                  </span>
-                )}
+                  {stage.status === "READY" ? (
+                    <span className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-gain shadow-[0_0_8px_oklch(0.8_0.18_158_/_60%)]" />
+                      <span className="font-mono text-xs font-bold uppercase tracking-wider text-gain glow-text">
+                        {stage.message || "ONLINE"}
+                      </span>
+                    </span>
+                  ) : stage.status === "ERROR" ? (
+                    <span className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-loss shadow-[0_0_8px_oklch(0.66_0.2_20_/_60%)]" />
+                      <span className="font-mono text-xs font-bold uppercase tracking-wider text-loss">
+                        ERROR
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <span className="inline-block h-2 w-2 rounded-full bg-cyan-signal animate-pulse" />
+                      <span className="font-mono text-xs uppercase tracking-wider text-cyan-signal/80">
+                        {stage.message || "CONNECTING..."}
+                      </span>
+                    </span>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -416,7 +390,7 @@ export function SystemBoot({ onReady }: SystemBootProps) {
 
         {/* Error message */}
         {error && (
-          <div className="mt-3 w-full border border-loss/40 bg-loss/10 px-3 py-2">
+          <div className="mt-4 w-full border border-loss/40 bg-loss/10 px-3 py-2">
             <div className="font-mono text-[0.6rem] text-loss font-semibold uppercase tracking-widest">
               System initialization error
             </div>
@@ -429,15 +403,15 @@ export function SystemBoot({ onReady }: SystemBootProps) {
           {bootPhase === "SYSTEM_READY" || bootPhase === "TRANSITIONING" ? (
             <div className="animate-scale-in">
               <div className="font-mono text-xs uppercase tracking-[0.35em] text-primary glow-text">
-                SYSTEM ONLINE
+                SYSTEMS ONLINE
               </div>
               <div className="mt-1.5 font-mono text-[0.55rem] uppercase tracking-[0.25em] text-muted-foreground/60">
-                TRADING: OFF &nbsp;•&nbsp; MODE: PAPER
+                ENTERING COMMAND CENTER
               </div>
             </div>
           ) : (
             <div className="font-mono text-[0.55rem] uppercase tracking-[0.25em] text-muted-foreground/40">
-              TRADING: OFF &nbsp;•&nbsp; MODE: PAPER
+              Initializing core subsystems...
             </div>
           )}
         </div>
