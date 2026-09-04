@@ -13,7 +13,7 @@
 
 import type { AIDecisionOutput, AIProvider, AIProviderName, ProviderError } from "./types";
 import { SAFE_FALLBACK } from "./types";
-import { buildTradingPrompt } from "./prompt";
+import { buildTradingPrompt, type ExchangeContextForPrompt } from "./prompt";
 import { getAvailableProviders } from "./providers";
 import type { MarketState } from "../../runtime/types";
 import { logger } from "../../logger";
@@ -48,10 +48,13 @@ export class AIRouter {
   /**
    * Route a market state through the provider chain with fallback.
    * Returns a validated AIDecisionOutput or the safe fallback.
+   *
+   * @param marketState - Market data from runtime intelligence
+   * @param exchangeContext - Optional P7D-5.2 exchange context for AI awareness
    */
-  async route(marketState: MarketState): Promise<RouterResult> {
+  async route(marketState: MarketState, exchangeContext?: ExchangeContextForPrompt | null): Promise<RouterResult> {
     const startTime = Date.now();
-    const prompt = buildTradingPrompt(marketState);
+    const prompt = buildTradingPrompt(marketState, exchangeContext);
     const promptStr = JSON.stringify(prompt);
 
     const providers = this.providersOverride ?? getAvailableProviders();

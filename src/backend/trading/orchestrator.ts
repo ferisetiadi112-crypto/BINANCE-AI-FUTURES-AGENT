@@ -49,6 +49,7 @@ import {
   getRecentExperiences,
 } from "../ai/experience-engine";
 import { deriveLessons } from "../ai/lesson-engine";
+import { buildExchangeContext } from "../ai/exchange-context";
 import { generateRealtimeMarketState } from "../services/data-adapter";
 import { getEnabledSymbols } from "../market/symbols";
 import { MarketScanner } from "../market/scanner";
@@ -619,9 +620,17 @@ export class TradingOrchestrator {
     recordMarketScan(marketState.symbol, marketState.dataQuality);
 
     // 1. Generate LLM Decision (with fallback to rule-based)
+    // P7D-5.2: Build exchange context for AI awareness (read-only)
+    let exchangeContext: import("../ai/llm/prompt").ExchangeContextForPrompt | null = null;
+    try {
+      exchangeContext = await buildExchangeContext();
+    } catch (err) {
+      logger.warn("orchestrator", `Failed to build exchange context for AI: ${err}`);
+    }
+
     let decision: AiDecision;
     try {
-      const routerResult = await generateLLMDecision(marketState);
+      const routerResult = await generateLLMDecision(marketState, exchangeContext);
 
       if (routerResult.provider === "safe_fallback") {
         logger.warn(

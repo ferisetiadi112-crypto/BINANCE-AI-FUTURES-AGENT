@@ -16,14 +16,15 @@ import type { MarketState } from "../../runtime/types";
 
 const CAPITAL = "$5.00";
 const DAILY_GUARDRAIL = "±$0.50";
-const SYSTEM_CONTEXT = `You are a conservative crypto futures trading AI for a $5 paper trading account.
+const SYSTEM_CONTEXT = `You are a conservative crypto futures trading AI for a $5 paper trading account on Binance Futures Testnet.
 
 CRITICAL RULES:
 1. Capital is only ${CAPITAL}. You CANNOT risk more than 20% ($1.00) per trade.
 2. Daily guardrail: ${DAILY_GUARDRAIL}. If daily PnL hits either limit, all trading stops.
 3. When uncertain, ALWAYS choose NO_TRADE. Capital preservation > profit.
 4. Only trade when signal confidence is genuinely high (>0.6) and risk/reward is favorable.
-5. This is a paper trading simulation — no real money at risk.`;
+5. This is Binance Futures Testnet — real testnet orders, not simulated.
+6. Exchange state below shows your ACTUAL account. Use it for context but the Risk Engine has final authority.`;
 
 const OUTPUT_SCHEMA = `Respond with ONLY valid JSON matching this schema:
 {
@@ -40,17 +41,32 @@ function fmt(value: number, decimals: number): string {
   return value.toFixed(decimals);
 }
 
+export type ExchangeContextForPrompt = {
+  source: string;
+  available: boolean;
+  connection: { status: string; isStale: boolean };
+  account: { balance: number; availableBalance: number; margin: number; unrealizedPnl: number } | null;
+  positions: Array<{ symbol: string; side: string; size: number; entryPrice: number; markPrice: number; leverage: number; margin: number; unrealizedPnl: number }>;
+  positionCount: number;
+  hasOpenPosition: boolean;
+  dataFreshness: string;
+};
+
 /**
  * Build a concise trading prompt from real-time market state.
  *
  * Returns a system + user prompt pair suitable for chat completion APIs.
  * The system prompt sets the persona and constraints.
  * The user prompt provides market data and requests JSON output.
+ *
+ * @param market - Market state from runtime intelligence
+ * @param exchangeContext - Optional exchange context from unified state (P7D-5.2)
  */
 export function buildTradingPrompt(
   market: MarketState,
+  exchangeContext?: ExchangeContextForPrompt | null,
 ): { system: string; user: string } {
-  const user = `MARKET DATA — ${market.symbol} at ${new Date(market.timestamp).toISOString()}
+  let user = `MARKET DATA — ${market.symbol} at ${new Date(market.timestamp).toISOString()}
 
 Price: $${fmt(market.price, 2)} (24h change: ${fmt(market.priceChangePercent24h, 2)}%)
 
@@ -61,10 +77,48 @@ VOLUME: ${fmt(market.volume24h, 0)} (change vs avg: ${fmt(market.volumeChange, 1
 STRUCTURE: ${market.marketStructure}
 REGIME: ${market.marketRegime} (confidence: ${fmt(market.regimeConfidence, 1)}%)
 LIQUIDITY: ${fmt(market.liquidity, 1)}/100
-DATA QUALITY: ${market.dataQuality} | FEED: ${market.feedStatus}
+DATA QUALITY: ${market.dataQuality} | FEED: ${market.feedStatus}`;
+
+  // P7D-5.2: Append exchange context if available
+  if (exchangeContext && exchangeContext.available) {
+    user += `
+
+${formatExchangeContextSection(exchangeContext)}`;
+  } else if (exchangeContext && !exchangeContext.available) {
+    user += `
+
+EXCHANGE: ${exchangeContext.connection.status} — Exchange data unavailable. Focus on market analysis only.`;
+  }
+
+  user += `
 
 Analyze the data and provide your trading recommendation.
 ${OUTPUT_SCHEMA}`;
 
   return { system: SYSTEM_CONTEXT, user };
+}
+
+/**
+ * Format exchange context as a structured section for the prompt.
+ */
+function formatExchangeContextSection(ctx: ExchangeContextForPrompt): string {
+  const lines: string[] = [];
+
+  lines.push(`EXCHANGE STATE — ${ctx.source}`);
+  lines.push(`Connection: ${ctx.connection.status} | Data: ${ctx.dataFreshness}`);
+
+  if (ctx.account) {
+    lines.push(`Balance: $${ctx.account.balance.toFixed(2)} | Available: $${ctx.account.availableBalance.toFixed(2)} | Margin: $${ctx.account.margin.toFixed(2)} | PnL: $${ctx.account.unrealizedPnl.toFixed(4)}`);
+  }
+
+  if (ctx.hasOpenPosition) {
+    lines.push(`Positions (${ctx.positionCount}):`);
+    for (const pos of ctx.positions) {
+      lines.push(`  ${pos.side} ${pos.symbol} | Size: ${pos.size} | Entry: $${pos.entryPrice.toFixed(2)} | Mark: $${pos.markPrice.toFixed(2)} | ${pos.leverage}x | PnL: $${pos.unrealizedPnl.toFixed(4)}`);
+    }
+  } else {
+    lines.push(`Positions: None`);
+  }
+
+  return lines.join("\n");
 }

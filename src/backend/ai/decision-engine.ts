@@ -19,6 +19,7 @@ import type { AiDecision, DecisionDirection, DecisionEvidence, StrategyName, Con
 import { getConfidenceLevel } from "./types";
 import { evaluateAllStrategies, getBestSignal } from "./strategies";
 import { AIRouter, type RouterResult } from "./llm/router";
+import type { ExchangeContextForPrompt } from "./llm/prompt";
 import type { AIDecisionOutput } from "./llm/types";
 import { logger } from "../logger";
 
@@ -185,9 +186,12 @@ export function resetLLMRouter(): void {
  *   - provider: which provider answered (or "safe_fallback")
  *   - elapsedMs: total latency
  */
-export async function generateLLMDecision(marketState: MarketState): Promise<RouterResult> {
+export async function generateLLMDecision(
+  marketState: MarketState,
+  exchangeContext?: ExchangeContextForPrompt | null,
+): Promise<RouterResult> {
   const router = getLLMRouter();
-  return router.route(marketState);
+  return router.route(marketState, exchangeContext);
 }
 
 /**
