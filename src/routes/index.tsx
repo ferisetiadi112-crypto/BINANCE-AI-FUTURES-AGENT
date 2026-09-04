@@ -5,10 +5,8 @@ import {
   Activity,
   ArrowDownRight,
   ArrowRight,
-  ArrowUpRight,
   BrainCircuit,
   CheckCircle2,
-  Clock,
   Database,
   Gauge,
   Lock,
@@ -17,7 +15,6 @@ import {
   Shield,
   Target,
   TrendingUp,
-  Wallet,
   Zap,
   XCircle,
   AlertTriangle,
@@ -289,19 +286,8 @@ function Dashboard() {
         </div>
       )}
 
-      {/* ═══ B. ACTIVE POSITION — Second priority ═══════════════════ */}
+      {/* ═══ B. ACCOUNT / TRADING STATE ═════════════════════════════ */}
       <div className="mt-3">
-        <ActivePositionPanel
-          state={positionState}
-          position={firstPosition}
-          positionCount={positions.length}
-          isConnected={isConnected}
-          totalUnrealizedPnl={positions.reduce((a: number, p: any) => a + p.unrealizedPnl, 0)}
-        />
-      </div>
-
-      {/* ═══ C. ACCOUNT / TRADING STATE ═════════════════════════════ */}
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <Panel title="Account" code="BINANCE FUTURES" glow>
           {account ? (
             <div className="space-y-3">
@@ -331,32 +317,9 @@ function Dashboard() {
             </div>
           )}
         </Panel>
-
-        {/* AI Activity */}
-        <Panel title="AI Activity" code="ENGINE" glow action={<Tag tone="cyan">{aiActivity}</Tag>}>
-          <div className="space-y-3">
-            <div className="flex items-center gap-3 rounded-sm border border-primary/30 bg-primary/5 px-4 py-3">
-              <BrainCircuit className="h-5 w-5 text-primary" />
-              <div>
-                <div className="font-mono text-sm font-semibold text-primary">{aiActivity}</div>
-                <div className="font-mono text-[0.65rem] text-muted-foreground">
-                  {lastEvent
-                    ? `Last decision: ${lastEvent.symbol} — ${fmtTime(lastEvent.timestamp)}`
-                    : "Waiting for market data..."}
-                </div>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <MiniStat label="Execution Mode" value={executionMode} />
-              <MiniStat label="Testnet Ready" value={orch?.testnetReady ? "YES" : "NO"} />
-              <MiniStat label="Runtime Ticks" value={String(runtime?.stats?.tickCount || 0)} />
-              <MiniStat label="Processed" value={String(runtime?.stats?.totalProcessed || 0)} />
-            </div>
-          </div>
-        </Panel>
       </div>
 
-      {/* ═══ D. RISK STATE — Compact supporting info ═════════════════ */}
+      {/* ═══ C. RISK STATE ═══════════════════════════════════════════ */}
       <div className="mt-3">
         <Panel title="Risk State" code="GUARDIAN" action={<Tag tone={riskState?.isLocked ? "loss" : "gain"}>{riskState?.isLocked ? "LOCKED" : "PROTECTED"}</Tag>}>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
@@ -385,8 +348,19 @@ function Dashboard() {
         </Panel>
       </div>
 
+      {/* ═══ D. ACTIVE POSITION ══════════════════════════════════════ */}
+      <div className="mt-3">
+        <ActivePositionPanel
+          state={positionState}
+          position={firstPosition}
+          positionCount={positions.length}
+          isConnected={isConnected}
+          totalUnrealizedPnl={positions.reduce((a: number, p: any) => a + p.unrealizedPnl, 0)}
+        />
+      </div>
+
       {/* ═══ E. LAST AI DECISION ═════════════════════════════════════ */}
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+      <div className="mt-3">
         <Panel title="Last AI Decision" code="DECISION">
           {runtimeEvents.length > 0 ? (
             <div className="space-y-2">
@@ -409,7 +383,10 @@ function Dashboard() {
             <div className="py-4 text-center font-mono text-sm text-muted-foreground">No decisions yet</div>
           )}
         </Panel>
+      </div>
 
+      {/* ═══ F. POST-TRADE REVIEWS ═══════════════════════════════════ */}
+      <div className="mt-3">
         <Panel title="Post-Trade Reviews" code="REVIEWS">
           {aiReviews.length > 0 ? (
             <div className="max-h-[220px] space-y-2 overflow-y-auto">
