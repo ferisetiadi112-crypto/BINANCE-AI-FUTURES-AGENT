@@ -330,21 +330,12 @@ export const getAuditTrail = createServerFn({ method: "GET" }).handler(
 
 export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
   async () => {
-    const executor = getTestnetExecutor();
-    const configured = isTestnetConfigured();
-    let connected = false;
-    let balance = 0;
-    let positions: Array<{
-      symbol: string;
-      side: string;
-      size: number;
-      entryPrice: number;
-      markPrice: number;
-      unrealizedPnl: number;
-      leverage: number;
-      margin: number;
-      marginType: string;
-    }> = [];
+    // P7D-5.1: Read from unified exchange state (cached, WebSocket-updated)
+    // instead of making fresh REST calls to Binance on every request.
+    const { getExchangeSnapshot } = await import("../exchange/unified-state");
+    const snapshot = getExchangeSnapshot();
+
+    // Also get open orders from executor (lightweight, not cached)
     let openOrders: Array<{
       orderId: number;
       symbol: string;
@@ -354,80 +345,63 @@ export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
       price: string;
       status: string;
     }> = [];
-    // P7D-3-FIX-REALIZED-PNL-2: Realized PnL from Binance Futures Testnet (source of truth)
-    // CRITICAL: Distinguishes real zero (SUCCESS+value=0) from error (ERROR+value=null)
-    let realizedPnl: number | null = null;
-    let realizedPnlStatus: "SUCCESS" | "ERROR" | "UNAVAILABLE" = "UNAVAILABLE";
-
-    if (configured) {
-      const client = executor.getClient();
-      if (client) {
-        // If not connected yet, attempt to connect
-        if (!client.isConnected()) {
-          try {
-            await client.connect();
-          } catch {
-            // Connection attempt failed — will be reported below
-          }
+    if (snapshot.connected) {
+      try {
+        const executor = getTestnetExecutor();
+        const client = executor.getClient();
+        if (client?.isConnected()) {
+          const orders = await client.getOpenOrders();
+          openOrders = orders.map((o) => ({
+            orderId: o.orderId,
+            symbol: o.symbol,
+            side: o.side,
+            type: o.type,
+            quantity: o.origQty,
+            price: o.price,
+            status: o.status,
+          }));
         }
-        connected = client.isConnected();
-        if (connected) {
-          try {
-            const snapshot = await executor.getAccountSnapshot();
-            balance = snapshot.balance;
-            positions = snapshot.positions;
-          } catch {
-            // Account query failed
-          }
-          // Fetch open orders from Binance Testnet (READ-ONLY)
-          try {
-            const orders = await client.getOpenOrders();
-            openOrders = orders.map((o) => ({
-              orderId: o.orderId,
-              symbol: o.symbol,
-              side: o.side,
-              type: o.type,
-              quantity: o.origQty,
-              price: o.price,
-              status: o.status,
-            }));
-          } catch {
-            // Open orders query failed — not critical
-          }
-          // P7D-3-FIX-REALIZED-PNL-2: Fetch realized PnL from Binance /fapi/v1/income
-          // Returns structured result: SUCCESS (value=number|null), ERROR, UNAVAILABLE
-          const pnlResult = await executor.getRealizedPnl();
-          realizedPnl = pnlResult.value;
-          realizedPnlStatus = pnlResult.status;
-        }
+      } catch {
+        // Open orders query failed — not critical
       }
     }
 
-    // P7C: Include truthful connection-state from orchestrator
-    const orchestrator = getOrchestrator();
-    const connectionState = orchestrator?.getConnectionState() ?? null;
-
-    // Use orchestrator's testnetReady as the authoritative connected flag
-    // when orchestrator has been initialized (overrides client-level check)
-    const effectiveConnected = connectionState?.testnetReady ?? connected;
+    // P7D-3-FIX-REALIZED-PNL-2: Realized PnL from Binance Futures Testnet
+    let realizedPnl: number | null = null;
+    let realizedPnlStatus: "SUCCESS" | "ERROR" | "UNAVAILABLE" = "UNAVAILABLE";
+    if (snapshot.connected) {
+      try {
+        const executor = getTestnetExecutor();
+        const pnlResult = await executor.getRealizedPnl();
+        realizedPnl = pnlResult.value;
+        realizedPnlStatus = pnlResult.status;
+      } catch {
+        // Realized PnL fetch failed
+      }
+    }
 
     return wrap({
-      configured,
-      connected: effectiveConnected,
-      balance,
-      positions,
+      configured: snapshot.configured,
+      connected: snapshot.connected,
+      balance: snapshot.account.balance,
+      positions: snapshot.positions,
       openOrders,
       paperTrading: process.env["PAPER_TRADING"] !== "false",
-      // P7D-3-FIX-REALIZED-PNL-2: Realized PnL sourced from Binance Futures Testnet
       realizedPnl,
       realizedPnlStatus,
-      // P7C fields
-      testnetReady: connectionState?.testnetReady ?? false,
-      lastSuccessfulSync: connectionState?.lastSuccessfulSync ?? null,
-      lastSyncAttempt: connectionState?.lastSyncAttempt ?? null,
-      connectionError: connectionState?.connectionError ?? null,
-      consecutiveSyncFailures: connectionState?.consecutiveSyncFailures ?? 0,
-      isStale: connectionState?.isStale ?? true,
+      // P7D-5.1: Unified state fields
+      connectionStatus: snapshot.connectionStatus,
+      lastSyncTimestamp: snapshot.lastSyncTimestamp,
+      stale: snapshot.stale,
+      lastError: snapshot.lastError,
+      consecutiveFailures: snapshot.consecutiveFailures,
+      // Legacy fields (still used by some consumers)
+      testnetReady: snapshot.connected,
+      lastSuccessfulSync: snapshot.lastSyncTimestamp || null,
+      lastSyncAttempt: snapshot.lastConnectionAttempt || null,
+      connectionError: snapshot.lastError,
+      consecutiveSyncFailures: snapshot.consecutiveFailures,
+      isStale: snapshot.stale,
     });
   },
 );

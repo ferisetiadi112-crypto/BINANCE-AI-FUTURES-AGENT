@@ -93,9 +93,30 @@ export function SystemBoot({ onReady }: SystemBootProps) {
     [],
   );
 
-  // Poll readiness — UNCHANGED backend logic.
+  // Poll readiness — P7D-5.1 Fast Boot.
+  // Transition when BOTH stages have reported (any status including ERROR).
+  // Don't wait for systemReady — that blocks on database + full runtime.
   useEffect(() => {
     let cancelled = false;
+    let booted = false;
+
+    function doTransition() {
+      if (booted || cancelled) return;
+      booted = true;
+      setBootPhase("SYSTEM_READY");
+      setTimeout(() => {
+        if (!cancelled) {
+          setStoredBootState(true);
+          setBootPhase("TRANSITIONING");
+          setTimeout(() => {
+            if (!cancelled) onReady();
+          }, 600);
+        }
+      }, 600);
+    }
+
+    // Maximum boot timeout — force transition after 12 seconds
+    const maxTimeout = setTimeout(doTransition, 12_000);
 
     async function poll() {
       try {
@@ -111,7 +132,8 @@ export function SystemBoot({ onReady }: SystemBootProps) {
         } else if (data.binanceConnected) {
           updateStage("binance", "READY", "CONNECTED");
         } else if (data.runtimeReady) {
-          updateStage("binance", "READY", data.executionMode === "PAPER" ? "PAPER MODE" : "Not connected");
+          // Runtime is ready but Binance not connected — show ERROR
+          updateStage("binance", "ERROR", "OFFLINE");
         } else {
           updateStage("binance", "ACTIVE", "CONNECTING...");
         }
@@ -120,7 +142,7 @@ export function SystemBoot({ onReady }: SystemBootProps) {
         if (data.aiRuntimeOnline) {
           updateStage("ai-engine", "READY", "ONLINE");
         } else if (data.runtimeReady) {
-          updateStage("ai-engine", "READY", "INITIALIZED");
+          updateStage("ai-engine", "READY", "ONLINE");
         } else {
           updateStage("ai-engine", "ACTIVE", "INITIALIZING...");
         }
@@ -130,18 +152,16 @@ export function SystemBoot({ onReady }: SystemBootProps) {
           setError(data.error);
         }
 
-        // System fully ready — gate on Binance + AI Engine
-        if (data.systemReady) {
-          setBootPhase("SYSTEM_READY");
-          setTimeout(() => {
-            if (!cancelled) {
-              setStoredBootState(true);
-              setBootPhase("TRANSITIONING");
-              setTimeout(() => {
-                if (!cancelled) onReady();
-              }, 600);
-            }
-          }, 800);
+        // P7D-5.1: Transition when BOTH stages have reported their status
+        // (either READY or ERROR) — don't require systemReady
+        const binanceReported = stages.some(
+          (s) => s.id === "binance" && (s.status === "READY" || s.status === "ERROR"),
+        );
+        const aiReported = stages.some(
+          (s) => s.id === "ai-engine" && (s.status === "READY" || s.status === "ERROR"),
+        );
+        if (binanceReported && aiReported) {
+          doTransition();
         }
       } catch {
         // Server might not be ready yet — keep polling
@@ -153,9 +173,10 @@ export function SystemBoot({ onReady }: SystemBootProps) {
 
     return () => {
       cancelled = true;
+      clearTimeout(maxTimeout);
       clearInterval(interval);
     };
-  }, [updateStage, onReady]);
+  }, [updateStage, onReady, stages]);
 
   // ─── Derived presentation values ────
 

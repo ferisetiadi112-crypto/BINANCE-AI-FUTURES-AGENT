@@ -158,18 +158,29 @@ function Dashboard() {
   const executionMode = orch?.executionMode || "PAPER";
   const aiRunning = !!orch?.running;
 
-  // ── Determine position state ──
+  // ── Determine position state — P7D-5.1 ──
+  // Positions come ONLY from Binance, never from AI signals.
   let positionState: PositionState = "LOADING";
-  if (testnetError || (testnetResp && !testnet)) {
+  if (testnetError) {
+    positionState = "ERROR";
+  } else if (testnetResp && !testnet) {
+    // API returned but testnet data is null/undefined
     positionState = "ERROR";
   } else if (testnetResp) {
-    // We have testnet data — check positions
-    if (positions.length > 0) {
+    // We have testnet response data
+    const connStatus = testnet.connectionStatus as string | undefined;
+    if (connStatus === "ERROR" || connStatus === "OFFLINE") {
+      // Binance connection failed — position data unavailable
+      positionState = "ERROR";
+    } else if (positions.length > 0) {
+      // Real Binance positions exist
       positionState = positions[0].side === "LONG" ? "LONG" : "SHORT";
     } else if (testnet.connected) {
+      // Connected but no positions
       positionState = "NO_POSITION";
     } else {
-      positionState = "NO_POSITION";
+      // Waiting for sync
+      positionState = "LOADING";
     }
   }
 

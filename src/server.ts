@@ -4,6 +4,7 @@ import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { startTradingRuntime } from "./backend/trading/runtime";
 import { initializeDatabase } from "./backend/database";
+import { initializeUnifiedState } from "./backend/exchange/unified-state";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -123,12 +124,21 @@ function initializeRuntimeInBackground(): Promise<void> {
       await startTradingRuntime(mode, tradingEnabled);
       _runtimeReady = true;
       console.log(`[server] Runtime started successfully: mode=${mode}`);
+
+      // Step 3: Initialize unified exchange state (WebSocket + REST fallback)
+      // This runs after runtime so the executor is available
+      initializeUnifiedState().catch((err) => {
+        console.error(`[server] Unified state init error: ${err}`);
+      });
     } catch (err) {
       _runtimeError = `Runtime start failed: ${err}`;
       console.error(`[server] Runtime start failed: ${err}`);
       // Runtime error — orchestrator exists but may be degraded
       // Set ready=true so the app can still function in degraded state
       _runtimeReady = true;
+
+      // Still try to initialize unified state (REST-only mode)
+      initializeUnifiedState().catch(() => {});
     }
   })();
 
