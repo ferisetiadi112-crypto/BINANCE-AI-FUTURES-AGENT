@@ -4,10 +4,10 @@
  * Dynamically initializes AI providers based on available environment variables.
  * Only providers with configured API keys are instantiated and used.
  *
- * Active providers (Phase 9C):
- *   1. Groq (fast inference, free tier — GROQ_API_KEY)
- *   2. Gemini (stable, Google infrastructure — GEMINI_API_KEY)
- *   3. OpenRouter (multi-model fallback — OPENROUTER_API_KEY)
+ * Active providers (Phase 1 — AI Brain connected):
+ *   1. Gemini (PRIMARY — GEMINI_API_KEY)
+ *   2. Groq (FALLBACK — GROQ_API_KEY)
+ *   3. OpenRouter (FALLBACK — OPENROUTER_API_KEY)
  *
  * Inactive providers (keys not provisioned):
  *   Cerebras, Mistral — omitted until their keys are configured.
@@ -28,9 +28,9 @@ import { logger } from "../../../logger";
  */
 export function getAvailableProviders(): AIProvider[] {
   const allProviders: AIProvider[] = [
-    new GroqProvider(),    // 1. Speed — GROQ_API_KEY
-    new GeminiProvider(),  // 2. Stability — GEMINI_API_KEY
-    new OpenRouterProvider(), // 3. Fallback — OPENROUTER_API_KEY
+    new GeminiProvider(),     // 1. PRIMARY — GEMINI_API_KEY
+    new GroqProvider(),       // 2. FALLBACK — GROQ_API_KEY
+    new OpenRouterProvider(), // 3. FALLBACK — OPENROUTER_API_KEY
   ];
 
   const available = allProviders.filter((p) => {

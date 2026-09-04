@@ -13,6 +13,8 @@
  */
 
 import type { MarketState } from "../../runtime/types";
+import type { MemoryContextForPrompt } from "../memory-context";
+import type { ResearchResult } from "../../research/research-engine";
 
 const CAPITAL = "$5.00";
 const DAILY_GUARDRAIL = "±$0.50";
@@ -28,11 +30,29 @@ CRITICAL RULES:
 
 const OUTPUT_SCHEMA = `Respond with ONLY valid JSON matching this schema:
 {
+  "action": "RESEARCH_MORE" | "WAIT" | "OPEN" | "HOLD" | "CLOSE",
   "direction": "LONG" | "SHORT" | "NO_TRADE",
   "confidence": number (0.0 to 1.0),
   "strategy": "TREND_FOLLOWING" | "MOMENTUM" | "BREAKOUT" | "PULLBACK" | "MEAN_REVERSION",
-  "reasoning": "Concise 1-2 sentence explanation of your decision"
-}`;
+  "reasoning": "Concise 1-2 sentence explanation of your decision",
+  "tradePlan": {
+    "direction": "LONG" | "SHORT",
+    "entry": number (proposed entry price),
+    "stopLoss": number (proposed stop-loss price),
+    "takeProfit": number (proposed take-profit price),
+    "margin": number (proposed margin in USDT, max $10 allocation),
+    "leverage": number (1-20)
+  }
+}
+
+ACTION RULES:
+- RESEARCH_MORE: information is insufficient — do not trade.
+- WAIT: conditions not attractive — do not trade.
+- OPEN: valid opportunity. tradePlan is REQUIRED. Only when NO position is open.
+- HOLD: keep the existing position open. Only when a position IS open.
+- CLOSE: close the existing position. Only when a position IS open.
+- You are NOT forced to trade. WAIT/RESEARCH_MORE are correct answers most of the time.
+- Your trade plan is a PROPOSAL. The Risk Engine has final authority and may block or adjust it.`;
 
 /**
  * Format a numeric value with fixed precision for the prompt.
@@ -64,6 +84,17 @@ export type MarketContextForPrompt = {
 };
 
 /**
+ * Phase 2: Position awareness hint passed into the prompt so the AI knows
+ * whether OPEN/HOLD/CLOSE are permissible. Derived from real position state.
+ */
+export type PositionHint = {
+  hasPosition: boolean;
+  symbol: string | null;
+  side: "LONG" | "SHORT" | null;
+  size: number;
+};
+
+/**
  * Build a concise trading prompt from real-time market state.
  *
  * Returns a system + user prompt pair suitable for chat completion APIs.
@@ -73,11 +104,17 @@ export type MarketContextForPrompt = {
  * @param market - Market state from runtime intelligence
  * @param exchangeContext - Optional exchange context from unified state (P7D-5.2)
  * @param marketContext - Optional realtime market context from Binance Testnet (P7D-5.3)
+ * @param memoryContext - Optional bounded lessons/experiences memory (Phase 1)
+ * @param research - Optional real-indicator research on this symbol (Phase 1)
+ * @param positionHint - Optional real position state for action gating (Phase 2)
  */
 export function buildTradingPrompt(
   market: MarketState,
   exchangeContext?: ExchangeContextForPrompt | null,
   marketContext?: MarketContextForPrompt | null,
+  memoryContext?: MemoryContextForPrompt | null,
+  research?: ResearchResult | null,
+  positionHint?: PositionHint | null,
 ): { system: string; user: string } {
   let user = `MARKET DATA — ${market.symbol} at ${new Date(market.timestamp).toISOString()}
 
@@ -114,9 +151,36 @@ ${formatMarketContextSection(marketContext)}`;
 MARKET DATA: ${marketContext.connection.status} — Realtime market data unavailable.`;
   }
 
-  user += `
+  // Phase 1: Research context (real indicators computed from real klines)
+  if (research) {
+    user += `\n\nRESEARCH — ${research.symbol} (score ${research.score.toFixed(0)}/100, quality ${research.dataQuality})
+Trend: ${research.trend.direction} (strength ${research.trend.strength.toFixed(0)}/100, EMA cross ${research.trend.emaCross})
+Momentum: RSI ${research.momentum.rsi.toFixed(0)} (${research.momentum.rsiState}), MACD hist ${research.momentum.macdHistogram.toFixed(4)}
+Volatility: ATR ${research.volatility.atr.toFixed(4)} (${research.volatility.atrPercent.toFixed(2)}%, regime ${research.volatility.regime})
+Volume: ${research.volume.condition} (ratio ${research.volume.ratio.toFixed(2)})
+Support: $${research.supportResistance.support.toFixed(2)} | Resistance: $${research.supportResistance.resistance.toFixed(2)}
+R/R: long ${research.riskReward.longRiskReward.toFixed(2)} | short ${research.riskReward.shortRiskReward.toFixed(2)}
+Research direction: ${research.tradeableDirection}`;
+    if (research.warnings.length > 0) {
+      user += `\nWarnings: ${research.warnings.join("; ")}`;
+    }
+    if (research.evidence.length > 0) {
+      user += `\nEvidence: ${research.evidence.slice(0, 4).join(" | ")}`;
+    }
+  }
 
-Analyze the data and provide your trading recommendation.
+  // Phase 1: Bounded memory context (lessons + recent experiences)
+  if (memoryContext && memoryContext.available) {
+    user += `\n\n${memoryContext.formatted}`;
+  } else {
+    user += `\n\nMEMORY: No lessons or experiences available yet.`;
+  }
+
+  user += `\n\nPOSITION STATE: ${positionHint?.hasPosition
+    ? `A ${positionHint.side} position is OPEN on ${positionHint.symbol} (size ${positionHint.size}).\nAllowed actions: RESEARCH_MORE, WAIT, HOLD, CLOSE. OPEN is FORBIDDEN — it would duplicate the position.`
+    : `No position is open.\nAllowed actions: RESEARCH_MORE, WAIT, OPEN. HOLD and CLOSE are FORBIDDEN — there is nothing to hold or close.`}`;
+
+  user += `\n\nAnalyze the data and provide your trading recommendation.
 ${OUTPUT_SCHEMA}`;
 
   return { system: SYSTEM_CONTEXT, user };

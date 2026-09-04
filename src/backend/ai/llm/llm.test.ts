@@ -50,6 +50,7 @@ function createMockProvider(
     generateDecision: opts?.error
       ? vi.fn().mockRejectedValue(opts.error)
       : vi.fn().mockResolvedValue(opts?.decision ?? {
+          action: "WAIT" as const,
           direction: "LONG" as const,
           confidence: 0.72,
           strategy: "MOMENTUM" as const,
@@ -63,6 +64,7 @@ function createMockProvider(
 describe("AIDecisionSchema", () => {
   it("accepts valid LONG decision", () => {
     const valid: AIDecisionOutput = {
+      action: "WAIT",
       direction: "LONG",
       confidence: 0.75,
       strategy: "TREND_FOLLOWING",
@@ -74,6 +76,7 @@ describe("AIDecisionSchema", () => {
 
   it("accepts valid SHORT decision", () => {
     const valid: AIDecisionOutput = {
+      action: "WAIT",
       direction: "SHORT",
       confidence: 0.6,
       strategy: "MOMENTUM",
@@ -85,6 +88,7 @@ describe("AIDecisionSchema", () => {
 
   it("accepts valid NO_TRADE decision", () => {
     const valid: AIDecisionOutput = {
+      action: "WAIT",
       direction: "NO_TRADE",
       confidence: 0.3,
       strategy: "BREAKOUT",
@@ -107,6 +111,7 @@ describe("AIDecisionSchema", () => {
 
   it("rejects confidence below 0", () => {
     const invalid: AIDecisionOutput = {
+      action: "WAIT",
       direction: "LONG",
       confidence: -0.1,
       strategy: "TREND_FOLLOWING",
@@ -118,6 +123,7 @@ describe("AIDecisionSchema", () => {
 
   it("rejects confidence above 1", () => {
     const invalid: AIDecisionOutput = {
+      action: "WAIT",
       direction: "LONG",
       confidence: 1.5,
       strategy: "TREND_FOLLOWING",
@@ -138,6 +144,7 @@ describe("AIDecisionSchema", () => {
 
   it("rejects empty reasoning", () => {
     const invalid: AIDecisionOutput = {
+      action: "WAIT",
       direction: "LONG",
       confidence: 0.75,
       strategy: "TREND_FOLLOWING",
@@ -249,6 +256,7 @@ describe("buildTradingPrompt", () => {
 
 describe("AIRouter", () => {
   const mockValidDecision: AIDecisionOutput = {
+    action: "WAIT",
     direction: "LONG",
     confidence: 0.72,
     strategy: "MOMENTUM",

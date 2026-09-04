@@ -34,6 +34,9 @@ import {
   validateDecision,
   generateLLMDecision,
   mergeLLMDecisionIntoAiDecision,
+  validateAIAction,
+  validateAITradePlan,
+  type PositionInfo,
 } from "../ai/decision-engine";
 import { RiskEngine, type TradeProposal } from "../risk/engine";
 import {
@@ -51,6 +54,7 @@ import {
 import { deriveLessons } from "../ai/lesson-engine";
 import { buildExchangeContext } from "../ai/exchange-context";
 import { buildMarketContext } from "../ai/market-context";
+import { buildMemoryContext } from "../ai/memory-context";
 import {
   startLatencyMeasurement,
   recordLatencyStage,
@@ -65,8 +69,7 @@ import { MarketScanner } from "../market/scanner";
 import { ResearchEngine } from "../research/research-engine";
 import { P6DecisionEngine } from "../research/p6-decision-engine";
 import { getMarketDataService } from "../market/data-service";
-import { logger } from "../logger";
-import { walletRepository } from "../repositories/wallet";
+import { logger } from "../logger";import { walletRepository } from "../repositories/wallet";
 import {
   recordMarketScan,
   recordRiskCheck,
@@ -639,31 +642,107 @@ export class TradingOrchestrator {
 
     recordLatencyStage("CONTEXT_BUILT");
 
+    // Phase 2: REAL position state — passed to the AI (position-aware prompt)
+    // and used to gate HOLD/CLOSE/OPEN after the LLM responds.
+    const positionInfo: PositionInfo = await this.getCurrentPositionInfo(marketState.symbol);
+    const positionHint: import("../ai/llm/prompt").PositionHint = positionInfo.hasPosition
+      ? { hasPosition: true, symbol: positionInfo.symbol, side: positionInfo.side, size: positionInfo.size }
+      : { hasPosition: false, symbol: null, side: null, size: 0 };
+
     let decision: AiDecision;
+    let llmProvider: string | null = null;
+    let usedSafeFallback = false;
     try {
       recordLatencyStage("LLM_START");
-      const routerResult = await generateLLMDecision(marketState, exchangeContext, aiMarketContext);
+      // Phase 1: Research (real klines/indicators for this symbol) — best effort.
+      // If research fails, the LLM still runs on the base MarketState.
+      let research: import("../research/research-engine").ResearchResult | null = null;
+      try {
+        const snapshot = await getMarketDataService().getSnapshot(marketState.symbol);
+        if (snapshot && snapshot.dataQuality !== "INVALID") {
+          research = new ResearchEngine().research(snapshot);
+        }
+      } catch (err) {
+        logger.warn("orchestrator", `Research context unavailable for ${marketState.symbol}: ${err}`);
+      }
+
+      // Phase 1: Bounded memory context (lessons + experiences) — best effort.
+      const memoryContext = await buildMemoryContext(marketState);
+
+      recordLatencyStage("CONTEXT_BUILT_RESEARCH_MEMORY");
+
+      const routerResult = await generateLLMDecision(
+        marketState,
+        exchangeContext,
+        aiMarketContext,
+        memoryContext,
+        research,
+        positionHint,
+      );
       recordLatencyStage("LLM_RESPONSE");
 
       if (routerResult.provider === "safe_fallback") {
+        // EXISTING SAFE FALLBACK behavior — recorded honestly, never fabricated.
+        usedSafeFallback = true;
         logger.warn(
           "orchestrator",
-          "LLM all providers failed — falling back to rule-based decision",
+          "LLM all providers failed — using SAFE_FALLBACK (NO_TRADE, confidence 0), NOT the rule-based engine",
         );
-        decision = generateDecision(marketState);
+        decision = mergeLLMDecisionIntoAiDecision(routerResult.decision, marketState, routerResult);
       } else {
-        decision = mergeLLMDecisionIntoAiDecision(
-          routerResult.decision,
-          marketState,
-          routerResult,
-        );
+        llmProvider = routerResult.provider;
+        decision = mergeLLMDecisionIntoAiDecision(routerResult.decision, marketState, routerResult);
       }
     } catch (err) {
-      logger.error(
-        "orchestrator",
-        `LLM decision failed, using rule-based: ${err}`,
+      // Complete LLM pipeline failure → existing SAFE_FALLBACK (NO_TRADE),
+      // honestly labeled. The rule-based engine is preserved but is no longer
+      // the silent substitute for a failed AI response.
+      usedSafeFallback = true;
+      logger.error("orchestrator", `LLM pipeline failed — using SAFE_FALLBACK: ${err}`);
+      decision = mergeLLMDecisionIntoAiDecision(
+        (await import("../ai/llm/types")).SAFE_FALLBACK,
+        marketState,
+        { decision: (await import("../ai/llm/types")).SAFE_FALLBACK, provider: "safe_fallback", providerAttempts: 0, errors: [], elapsedMs: 0 },
       );
-      decision = generateDecision(marketState);
+    }
+
+    // Phase 1: Record the honest decision source (LLM provider or safe fallback)
+    decision.executionDetails = usedSafeFallback
+      ? `AI_SAFE_FALLBACK: all LLM providers failed — decision is the existing NO_TRADE safe fallback, not AI analysis${decision.executionDetails ? ` | ${decision.executionDetails}` : ""}`
+      : `AI_PROVIDER: ${llmProvider}${decision.executionDetails ? ` | ${decision.executionDetails}` : ""}`;
+
+    // Phase 2: Position-aware action gating. Invalid/unsafe AI actions are
+    // downgraded to WAIT honestly — no values are invented.
+    const rawAction = decision.action ?? "WAIT";
+    let actionError: string | null = null;
+    if (rawAction === "OPEN") {
+      actionError = validateAIAction("OPEN", positionInfo) ?? validateAITradePlan(decision.tradePlan, marketState.price);
+      if (actionError) {
+        logger.warn("orchestrator", `AI OPEN blocked: ${actionError}`);
+        decision.action = "WAIT";
+        decision.direction = "NO_TRADE";
+        decision.tradePlan = undefined;
+        decision.executionDetails = `AI_PLAN_BLOCKED: ${actionError}${decision.executionDetails ? ` | ${decision.executionDetails}` : ""}`;
+      } else {
+        decision.direction = decision.tradePlan!.direction;
+      }
+    } else if (rawAction === "HOLD" || rawAction === "CLOSE") {
+      actionError = validateAIAction(rawAction, positionInfo);
+      if (actionError) {
+        logger.warn("orchestrator", `AI ${rawAction} invalid: ${actionError}`);
+        decision.action = "WAIT";
+        decision.direction = "NO_TRADE";
+        decision.executionDetails = `AI_ACTION_INVALID: ${actionError}${decision.executionDetails ? ` | ${decision.executionDetails}` : ""}`;
+      } else if (rawAction === "HOLD") {
+        // HOLD maintains the existing position — never a new trade.
+        decision.direction = "NO_TRADE";
+      } else {
+        // CLOSE: direction mirrors the open position side so journal/experience records it.
+        decision.direction = positionInfo.side as "LONG" | "SHORT";
+      }
+    } else {
+      // RESEARCH_MORE / WAIT — no trade this cycle.
+      decision.direction = "NO_TRADE";
     }
 
     recordLatencyStage("DECISION_COMPLETED");
@@ -750,12 +829,40 @@ export class TradingOrchestrator {
       );
     }
 
-    // 5. Execute (Paper or Testnet)
+    // 5. Execute (Paper or Testnet) — Phase 2: action-aware
     let trade: PaperTrade | null = null;
     let testnetResult: TestnetExecutionResult | null = null;
 
-    if (riskResult.approved && decision.direction !== "NO_TRADE") {
-      if (this.executionMode === "TESTNET" && this.testnetExecutor && this.state.testnetReady) {
+    if (decision.action === "CLOSE" && !actionError) {
+      // CLOSE reduces exposure — executed via the existing close paths.
+      const closeResult = await this.executeCloseAction(decision, marketState, positionInfo);
+      trade = closeResult.trade;
+      decision.executionResult = closeResult.detail.startsWith("CLOSED") ? "EXECUTED" : "REJECTED";
+      decision.executionDetails = `${closeResult.detail}${decision.executionDetails ? ` | ${decision.executionDetails}` : ""}`;
+      if (trade) this.state.lastTrade = trade;
+    } else if (riskResult.approved && decision.direction !== "NO_TRADE") {
+      if (decision.action === "OPEN" && decision.tradePlan && !actionError) {
+        // Phase 2: AI-proposed trade plan → validation → Risk Engine → execution.
+        if (this.executionMode === "TESTNET" && this.testnetExecutor && this.state.testnetReady) {
+          testnetResult = await this.executeTestnetWithPlan(decision, decision.tradePlan);
+          if (testnetResult) {
+            this.state.lastTestnetResult = testnetResult;
+            decision.executionResult = testnetResult.success ? "EXECUTED" : "REJECTED";
+            if (!testnetResult.success && testnetResult.error) {
+              decision.executionDetails = testnetResult.error;
+            }
+          }
+        } else {
+          const planTrade = this.executeOpenWithPlan(decision, decision.tradePlan);
+          if (planTrade) {
+            trade = planTrade;
+            this.state.lastTrade = trade;
+            decision.executionResult = "EXECUTED";
+          } else {
+            decision.executionResult = "REJECTED";
+          }
+        }
+      } else if (this.executionMode === "TESTNET" && this.testnetExecutor && this.state.testnetReady) {
         testnetResult = await this.validateAndExecuteTestnet(decision, marketState.price);
         if (testnetResult) {
           this.state.lastTestnetResult = testnetResult;
@@ -794,7 +901,7 @@ export class TradingOrchestrator {
         }
       }
 
-      if (!trade && !testnetResult) {
+      if (!trade && !testnetResult && !decision.executionResult) {
         decision.executionResult = "SKIPPED";
       }
     } else if (!riskResult.approved) {
@@ -846,6 +953,214 @@ export class TradingOrchestrator {
     this.state.systemStatus = "RUNNING";
 
     return { decision, riskResult, trade, testnetResult };
+  }
+
+  // ─── Position Helpers (Phase 2) ─────────────────────────────
+
+  /**
+   * Phase 2: Get the REAL current position for a symbol (PAPER or TESTNET),
+   * used for AI position-awareness and action gating.
+   */
+  private async getCurrentPositionInfo(symbol: string): Promise<PositionInfo> {
+    if (this.executionMode === "TESTNET" && this.testnetExecutor && this.state.testnetReady) {
+      const pos = await this.getTestnetCurrentPosition(symbol);
+      if (pos && pos.side !== "FLAT" && pos.size > 0) {
+        return { hasPosition: true, symbol: pos.symbol, side: pos.side, size: pos.size };
+      }
+      return { hasPosition: false, symbol: null, side: null, size: 0 };
+    }
+    const pos = this.paperEngine.getPosition();
+    if (pos && pos.side !== "FLAT") {
+      return { hasPosition: true, symbol: pos.symbol, side: pos.side, size: pos.size };
+    }
+    return { hasPosition: false, symbol: null, side: null, size: 0 };
+  }
+
+  /**
+   * Phase 2: CLOSE execution path. PAPER: close via paper engine at market.
+   * TESTNET: close via existing TestnetExecutor (Binance PnL authoritative).
+   * Returns the closed trade or null with an honest failure detail.
+   */
+  private async executeCloseAction(
+    decision: AiDecision,
+    marketState: MarketState,
+    positionInfo: PositionInfo,
+  ): Promise<{ trade: PaperTrade | null; testnetResult: TestnetExecutionResult | null; detail: string }> {
+    if (this.executionMode === "TESTNET" && this.testnetExecutor && this.state.testnetReady && positionInfo.symbol && positionInfo.side) {
+      const ok = await this.closeTestnetPosition(
+        positionInfo.symbol,
+        positionInfo.side,
+        positionInfo.size,
+        decision.strategy,
+        decision.id,
+        decision.confidence,
+        Date.now(),
+      );
+      if (ok) {
+        recordTradeClosed(positionInfo.symbol, positionInfo.side, 0, decision.id, "AI_CLOSE");
+        return { trade: null, testnetResult: null, detail: `CLOSED ${positionInfo.side} ${positionInfo.symbol} via testnet` };
+      }
+      return { trade: null, testnetResult: null, detail: "CLOSE failed: testnet close returned failure" };
+    }
+
+    // PAPER mode: close at current market price
+    const closed = this.paperEngine.closePosition(marketState.price, "AI_CLOSE");
+    if (closed) {
+      this.riskEngine.recordPositionClosed(closed.quantity * closed.exitPrice / 20);
+      this.riskEngine.updateDailyPnl(closed.pnl);
+      this.state.riskLocked = this.riskEngine.isSystemLocked();
+      recordPnlUpdated(this.riskEngine.getDailyPnl(), this.riskEngine.getSessionPnl(), "ai-close");
+      recordTradeClosed(closed.symbol, closed.side, closed.pnl, closed.id, "AI_CLOSE");
+      recordPositionClosed(closed.symbol, closed.side, closed.exitPrice, closed.pnl, 0);
+      return { trade: closed, testnetResult: null, detail: `CLOSED ${closed.side} ${closed.symbol} @ ${closed.exitPrice.toFixed(2)}, PnL $${closed.pnl.toFixed(4)}` };
+    }
+    return { trade: null, testnetResult: null, detail: "CLOSE failed: no closable paper position" };
+  }
+
+  // ─── Phase 2: AI Trade Plan Execution ──────
+
+  /**
+   * Phase 2: Execute an OPEN using the AI-proposed trade plan (PAPER mode).
+   * Plan → structural validation (already done) → Risk Engine proposal/quantity
+   * validation (final authority) → existing paper engine execution.
+   */
+  private executeOpenWithPlan(decision: AiDecision, plan: NonNullable<AiDecision["tradePlan"]>): PaperTrade | null {
+    const quantity = plan.margin * plan.leverage / plan.entry;
+    // Round to 6 decimals (Binance LOT_SIZE precision is applied by the executor);
+    // naive 3-decimal rounding zeroes out small-capital quantities.
+    const roundedQty = Math.floor(quantity * 1_000_000) / 1_000_000;
+    if (roundedQty <= 0) {
+      logger.warn("orchestrator", "AI plan quantity is zero — cannot execute");
+      recordTradeRejected(decision.symbol, plan.direction, "AI plan produced zero quantity", decision.id);
+      return null;
+    }
+
+    // Risk Engine = FINAL AUTHORITY on the AI's plan.
+    const proposal: TradeProposal = {
+      symbol: decision.symbol,
+      side: plan.direction,
+      entryPrice: plan.entry,
+      quantity: roundedQty,
+      leverage: plan.leverage,
+      stopLossPrice: plan.stopLoss,
+    };
+
+    const proposalResult = this.riskEngine.validateTradeProposal(proposal);
+    if (!proposalResult.approved) {
+      logger.warn("orchestrator", `AI plan REJECTED by Risk Engine: ${proposalResult.reason}`);
+      recordTradeRejected(decision.symbol, plan.direction, `AI plan rejected: ${proposalResult.reason}`, decision.id);
+      decision.riskResult = "REJECTED";
+      decision.riskReason = `AI plan rejected: ${proposalResult.reason}`;
+      return null;
+    }
+
+    const quantityResult = this.riskEngine.validateOrderQuantity(plan.entry, roundedQty, plan.leverage);
+    if (!quantityResult.valid) {
+      logger.warn("orchestrator", `AI plan quantity REJECTED: ${quantityResult.reason}`);
+      recordTradeRejected(decision.symbol, plan.direction, `AI plan quantity rejected: ${quantityResult.reason}`, decision.id);
+      return null;
+    }
+
+    recordTradeApproved(decision.symbol, plan.direction, decision.id);
+
+    // Execute via the existing paper engine, honoring the AI plan (SL/TP/leverage/size).
+    const order = this.paperEngine.execute(
+      { ...decision, direction: plan.direction },
+      plan.entry,
+      { quantity: roundedQty, stopLoss: plan.stopLoss, takeProfit: plan.takeProfit, leverage: plan.leverage },
+    );
+    if (!order) return null;
+
+    const position = this.paperEngine.getPosition();
+    if (position) this.riskEngine.recordPositionOpened(position.margin);
+
+    recordTradeOpened(decision.symbol, plan.direction, order.fillPrice, position?.margin ?? 0, plan.leverage, order.id);
+    recordPositionOpened(decision.symbol, plan.direction, position?.margin ?? 0, plan.leverage);
+
+    const trade: PaperTrade = {
+      id: order.id,
+      symbol: order.symbol,
+      side: order.side === "BUY" ? "LONG" : "SHORT",
+      entryPrice: order.fillPrice,
+      exitPrice: order.fillPrice,
+      quantity: order.quantity,
+      pnl: 0,
+      pnlPercent: 0,
+      fees: order.simulatedFee,
+      slippage: order.simulatedSlippage,
+      duration: 0,
+      strategy: decision.strategy,
+      decisionId: decision.id,
+      openedAt: order.timestamp,
+      closedAt: 0,
+    };
+    return trade;
+  }
+
+  /**
+   * Phase 2: Execute an OPEN using the AI-proposed trade plan (TESTNET mode).
+   * Same risk pipeline; existing TestnetExecutor performs the actual orders.
+   */
+  private async executeTestnetWithPlan(
+    decision: AiDecision,
+    plan: NonNullable<AiDecision["tradePlan"]>,
+  ): Promise<TestnetExecutionResult | null> {
+    if (!this.testnetExecutor || !this.state.testnetReady) return null;
+
+    const quantity = plan.margin * plan.leverage / plan.entry;
+    // Round to 6 decimals (Binance LOT_SIZE precision is applied by the executor);
+    // naive 3-decimal rounding zeroes out small-capital quantities.
+    const roundedQty = Math.floor(quantity * 1_000_000) / 1_000_000;
+    if (roundedQty <= 0) {
+      logger.warn("orchestrator", "AI plan quantity is zero — cannot execute on testnet");
+      recordTradeRejected(decision.symbol, plan.direction, "AI plan produced zero quantity", decision.id);
+      return null;
+    }
+
+    const proposal: TradeProposal = {
+      symbol: decision.symbol,
+      side: plan.direction,
+      entryPrice: plan.entry,
+      quantity: roundedQty,
+      leverage: plan.leverage,
+      stopLossPrice: plan.stopLoss,
+    };
+
+    const proposalResult = this.riskEngine.validateTradeProposal(proposal);
+    if (!proposalResult.approved) {
+      logger.warn("orchestrator", `AI plan REJECTED by Risk Engine: ${proposalResult.reason}`);
+      recordTradeRejected(decision.symbol, plan.direction, `AI plan rejected: ${proposalResult.reason}`, decision.id);
+      decision.riskResult = "REJECTED";
+      decision.riskReason = `AI plan rejected: ${proposalResult.reason}`;
+      return null;
+    }
+
+    const quantityResult = this.riskEngine.validateOrderQuantity(plan.entry, roundedQty, plan.leverage);
+    if (!quantityResult.valid) {
+      logger.warn("orchestrator", `AI plan quantity REJECTED: ${quantityResult.reason}`);
+      recordTradeRejected(decision.symbol, plan.direction, `AI plan quantity rejected: ${quantityResult.reason}`, decision.id);
+      return null;
+    }
+
+    recordTradeApproved(decision.symbol, plan.direction, decision.id);
+
+    const result = await this.testnetExecutor.executeTrade({
+      direction: plan.direction,
+      symbol: decision.symbol,
+      quantity: roundedQty,
+      price: plan.entry,
+      leverage: plan.leverage,
+      stopLossPrice: plan.stopLoss,
+      takeProfitPrice: plan.takeProfit,
+      decisionId: decision.id,
+    });
+
+    if (result.success) {
+      this.riskEngine.recordPositionOpened(result.actualMargin);
+      recordTradeOpened(decision.symbol, plan.direction, result.price, result.actualMargin, result.actualLeverage, `TESTNET-${result.orderId}`);
+      recordPositionOpened(decision.symbol, plan.direction, result.actualMargin, result.actualLeverage);
+    }
+    return result;
   }
 
   // ─── Paper Execution Pipeline (P3) ──────
@@ -1258,11 +1573,10 @@ export class TradingOrchestrator {
         }
 
         // Balance sync is now handled once-per-tick above.
-        // Callers that need per-symbol sync (tests, diagnostics) still
-        // invoke processMarketUpdate() directly without skipBalanceSync.
-        const result = await this.processMarketUpdate(marketState, {
-          skipBalanceSync: true,
-        });
+        // Phase 1: The LIVE runtime decision path is the LLM/AI pipeline
+        // (processMarketUpdateLLM). The rule-based processMarketUpdate()
+        // remains as the compatibility/analysis path for tests and tooling.
+        const result = await this.processMarketUpdateLLM(marketState);
         results.push({ symbol: s.symbol, result, reason: "OK" });
       } catch (err) {
         logger.error("orchestrator", `Error processing ${s.symbol}: ${err}`);

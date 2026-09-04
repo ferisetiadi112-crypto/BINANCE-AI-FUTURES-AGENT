@@ -2,7 +2,7 @@
  * AI Router — BINANCE AI FUTURES AGENT v0.1
  *
  * Implements sequential fallback routing across 3 AI providers:
- *   1. Groq (speed) → 2. Gemini (stability) → 3. OpenRouter (fallback)
+ *   1. Gemini (PRIMARY) → 2. Groq (fallback) → 3. OpenRouter (fallback)
  *
  * Safety guarantees:
  * - If a provider throws (error, rate limit, invalid output), the next provider is tried.
@@ -13,7 +13,9 @@
 
 import type { AIDecisionOutput, AIProvider, AIProviderName, ProviderError } from "./types";
 import { SAFE_FALLBACK } from "./types";
-import { buildTradingPrompt, type ExchangeContextForPrompt, type MarketContextForPrompt } from "./prompt";
+import { buildTradingPrompt, type ExchangeContextForPrompt, type MarketContextForPrompt, type PositionHint } from "./prompt";
+import type { MemoryContextForPrompt } from "../memory-context";
+import type { ResearchResult } from "../../research/research-engine";
 import { getAvailableProviders } from "./providers";
 import type { MarketState } from "../../runtime/types";
 import { logger } from "../../logger";
@@ -57,9 +59,12 @@ export class AIRouter {
     marketState: MarketState,
     exchangeContext?: ExchangeContextForPrompt | null,
     marketContext?: MarketContextForPrompt | null,
+    memoryContext?: MemoryContextForPrompt | null,
+    research?: ResearchResult | null,
+    positionHint?: PositionHint | null,
   ): Promise<RouterResult> {
     const startTime = Date.now();
-    const prompt = buildTradingPrompt(marketState, exchangeContext, marketContext);
+    const prompt = buildTradingPrompt(marketState, exchangeContext, marketContext, memoryContext, research, positionHint);
     const promptStr = JSON.stringify(prompt);
 
     const providers = this.providersOverride ?? getAvailableProviders();

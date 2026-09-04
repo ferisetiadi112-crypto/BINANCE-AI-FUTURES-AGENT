@@ -81,6 +81,18 @@ export type AiDecision = {
   confidenceLevel: ConfidenceLevel;
   strategy: StrategyName;
 
+  /** Phase 2: What the AI wants to DO next. */
+  action?: "RESEARCH_MORE" | "WAIT" | "OPEN" | "HOLD" | "CLOSE";
+  /** Phase 2: AI-proposed trade plan (action = OPEN only). Proposal only — Risk Engine is final authority. */
+  tradePlan?: {
+    direction: "LONG" | "SHORT";
+    entry: number;
+    stopLoss: number;
+    takeProfit: number;
+    margin: number;
+    leverage: number;
+  } | undefined;
+
   // Context
   marketRegime: MarketRegime;
   regimeConfidence: number;

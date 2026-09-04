@@ -20,7 +20,7 @@ import { getConfidenceLevel } from "./types";
 import { evaluateAllStrategies, getBestSignal } from "./strategies";
 import { AIRouter, type RouterResult } from "./llm/router";
 import type { ExchangeContextForPrompt } from "./llm/prompt";
-import type { AIDecisionOutput } from "./llm/types";
+import type { AIDecisionOutput, AITradePlan } from "./llm/types";
 import { logger } from "../logger";
 
 const DECISION_VERSION = "1.0.0";
@@ -190,13 +190,80 @@ export async function generateLLMDecision(
   marketState: MarketState,
   exchangeContext?: ExchangeContextForPrompt | null,
   marketContext?: import("./llm/prompt").MarketContextForPrompt | null,
+  memoryContext?: import("./memory-context").MemoryContextForPrompt | null,
+  research?: import("../research/research-engine").ResearchResult | null,
+  positionHint?: import("./llm/prompt").PositionHint | null,
 ): Promise<RouterResult> {
   const router = getLLMRouter();
-  return router.route(marketState, exchangeContext, marketContext);
+  return router.route(marketState, exchangeContext, marketContext, memoryContext, research, positionHint);
+}
+
+// ─── Phase 2: Action & Trade Plan Validation ─────────────────────────
+
+export type PositionInfo = {
+  hasPosition: boolean;
+  symbol: string | null;
+  side: "LONG" | "SHORT" | null;
+  size: number;
+};
+
+/**
+ * Phase 2: Validate an AI action against the REAL current position state.
+ * - No position: only RESEARCH_MORE / WAIT / OPEN allowed.
+ * - Position open: only RESEARCH_MORE / WAIT / HOLD / CLOSE allowed (no duplicate OPEN).
+ * Returns an error message when the action is impermissible; null when valid.
+ */
+export function validateAIAction(
+  action: string,
+  position: PositionInfo | null,
+): string | null {
+  const hasPosition = !!position?.hasPosition;
+  if (action === "OPEN" && hasPosition) {
+    return `OPEN rejected: a ${position!.side} position is already open on ${position!.symbol} — duplicate position not allowed`;
+  }
+  if ((action === "HOLD" || action === "CLOSE") && !hasPosition) {
+    return `${action} rejected: no position is open — nothing to ${action.toLowerCase()}`;
+  }
+  return null;
 }
 
 /**
- * Convert an LLM AIDecisionOutput into a full AiDecision object.
+ * Phase 2: Validate the AI-proposed trade plan for OPEN decisions.
+ * Structural sanity only (prices, direction coherence, leverage bounds).
+ * Risk Engine remains the final authority via validateTradeProposal.
+ * Returns an error message when invalid; null when structurally valid.
+ */
+export function validateAITradePlan(
+  plan: AITradePlan | undefined,
+  currentPrice: number,
+): string | null {
+  if (!plan) return "OPEN decision is missing a trade plan";
+  if (!(plan.entry > 0) || !(plan.stopLoss > 0) || !(plan.takeProfit > 0)) {
+    return "Trade plan has non-positive prices";
+  }
+  if (!(plan.margin > 0)) return "Trade plan margin must be positive";
+  if (plan.leverage < 1 || plan.leverage > 20) return "Trade plan leverage must be 1-20";
+
+  // Impossible price / direction coherence — do not invent corrections, reject.
+  if (plan.direction === "LONG") {
+    if (plan.stopLoss >= plan.entry) return "LONG plan: stop-loss must be below entry";
+    if (plan.takeProfit <= plan.entry) return "LONG plan: take-profit must be above entry";
+  } else {
+    if (plan.stopLoss <= plan.entry) return "SHORT plan: stop-loss must be above entry";
+    if (plan.takeProfit >= plan.entry) return "SHORT plan: take-profit must be below entry";
+  }
+
+  // Entry wildly detached from the real market price (impossible price) — reject.
+  const deviation = Math.abs(plan.entry - currentPrice) / currentPrice;
+  if (deviation > 0.1) {
+    return `Trade plan entry $${plan.entry.toFixed(2)} deviates ${ (deviation * 100).toFixed(1) }% from market price $${currentPrice.toFixed(2)} (>10%) — rejected`;
+  }
+
+  return null;
+}
+
+/**
+ * Phase 2: Convert an AIDecisionOutput into a full AiDecision object.
  * Merges LLM output with market state context to produce the
  * standard AiDecision format used by the risk engine and paper trading.
  */
@@ -222,6 +289,8 @@ export function mergeLLMDecisionIntoAiDecision(
     confidence: llmOutput.confidence,
     confidenceLevel: getConfidenceLevel(llmOutput.confidence),
     strategy,
+    action: llmOutput.action,
+    tradePlan: llmOutput.tradePlan,
 
     marketRegime: marketState.marketRegime,
     regimeConfidence: marketState.regimeConfidence,
@@ -233,7 +302,7 @@ export function mergeLLMDecisionIntoAiDecision(
 
   logger.info(
     "ai-decision",
-    `LLM Decision: ${llmOutput.direction} ${marketState.symbol} (${(llmOutput.confidence * 100).toFixed(1)}%) via ${routerResult.provider} [${routerResult.elapsedMs}ms]`,
+    `LLM Decision: ${llmOutput.action ?? "WAIT"} ${llmOutput.direction} ${marketState.symbol} (${(llmOutput.confidence * 100).toFixed(1)}%) via ${routerResult.provider} [${routerResult.elapsedMs}ms]`,
   );
 
   return decision;

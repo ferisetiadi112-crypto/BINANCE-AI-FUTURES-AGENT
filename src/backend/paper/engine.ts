@@ -54,7 +54,11 @@ export class PaperTradingEngine {
 
   // ─── Execute Decision ────────────────────────────────────────────
 
-  execute(decision: AiDecision, currentPrice: number): PaperOrder | null {
+  execute(
+    decision: AiDecision,
+    currentPrice: number,
+    planOverride?: { quantity?: number; stopLoss?: number; takeProfit?: number; leverage?: number },
+  ): PaperOrder | null {
     // NO_TRADE → no execution
     if (decision.direction === "NO_TRADE") {
       logger.info("paper-engine", "NO_TRADE — skipping execution");
@@ -69,7 +73,8 @@ export class PaperTradingEngine {
 
     // Calculate order
     const side = decision.direction === "LONG" ? "BUY" : "SELL";
-    const quantity = this.calculateQuantity(currentPrice);
+    const quantity = planOverride?.quantity ?? this.calculateQuantity(currentPrice);
+    const leverage = planOverride?.leverage ?? this.config.defaultLeverage;
     const simulatedSlippage = currentPrice * this.config.simulatedSlippageRate;
     const fillPrice = side === "BUY"
       ? currentPrice + simulatedSlippage
@@ -105,14 +110,14 @@ export class PaperTradingEngine {
       markPrice: currentPrice,
       unrealizedPnl: 0,
       unrealizedPnlPercent: 0,
-      margin: (quantity * fillPrice) / this.config.defaultLeverage,
-      leverage: this.config.defaultLeverage,
-      stopLoss: decision.direction === "LONG"
+      margin: (quantity * fillPrice) / leverage,
+      leverage,
+      stopLoss: planOverride?.stopLoss ?? (decision.direction === "LONG"
         ? fillPrice * 0.98 // 2% stop loss
-        : fillPrice * 1.02,
-      takeProfit: decision.direction === "LONG"
+        : fillPrice * 1.02),
+      takeProfit: planOverride?.takeProfit ?? (decision.direction === "LONG"
         ? fillPrice * 1.04 // 4% take profit
-        : fillPrice * 0.96,
+        : fillPrice * 0.96),
       openedAt: Date.now(),
       updatedAt: Date.now(),
     };

@@ -338,7 +338,7 @@ describe("Trading Orchestrator", () => {
     it("uses LLM decision when provider succeeds", async () => {
       const { generateLLMDecision } = await import("../ai/decision-engine");
       llmSpy = vi.spyOn(await import("../ai/decision-engine"), "generateLLMDecision").mockResolvedValue({
-        decision: { direction: "LONG", confidence: 0.8, strategy: "MOMENTUM", reasoning: "Strong trend" },
+        decision: { action: "OPEN", direction: "LONG", confidence: 0.8, strategy: "MOMENTUM", reasoning: "Strong trend", tradePlan: { direction: "LONG", entry: 63000, stopLoss: 61740, takeProfit: 65520, margin: 1, leverage: 5 } },
         provider: "groq",
         providerAttempts: 1,
         errors: [],
@@ -353,9 +353,9 @@ describe("Trading Orchestrator", () => {
       expect(result.decision.id).toContain("DEC-LLM");
     });
 
-    it("falls back to rule-based when all LLM providers fail", async () => {
+    it("uses honest safe fallback when all LLM providers fail", async () => {
       llmSpy = vi.spyOn(await import("../ai/decision-engine"), "generateLLMDecision").mockResolvedValue({
-        decision: { direction: "NO_TRADE", confidence: 0, strategy: "TREND_FOLLOWING", reasoning: "All failed" },
+        decision: { action: "WAIT", direction: "NO_TRADE", confidence: 0, strategy: "TREND_FOLLOWING", reasoning: "All failed" },
         provider: "safe_fallback",
         providerAttempts: 0,
         errors: [],
@@ -364,26 +364,26 @@ describe("Trading Orchestrator", () => {
 
       const result = await orchestrator.processMarketUpdateLLM(trendingUpState);
 
-      // Should have fallen back to rule-based (modelVersion contains 'rule-based')
-      expect(result.decision.modelVersion).toContain("rule-based");
+      // Phase 1: no silent rule-based fallback — safe fallback is recorded honestly
+      expect(result.decision.modelVersion).toContain("safe_fallback");
       expect(result.decision).toBeDefined();
     });
 
-    it("falls back to rule-based when LLM throws an error", async () => {
+    it("uses honest safe fallback when LLM throws an error", async () => {
       llmSpy = vi.spyOn(await import("../ai/decision-engine"), "generateLLMDecision").mockRejectedValue(
         new Error("Network failure"),
       );
 
       const result = await orchestrator.processMarketUpdateLLM(trendingUpState);
 
-      // Should not crash — falls back to rule-based
+      // Should not crash — honest safe fallback is recorded
       expect(result.decision).toBeDefined();
-      expect(result.decision.modelVersion).toContain("rule-based");
+      expect(result.decision.modelVersion).toContain("safe_fallback");
     });
 
     it("risk engine still gates LLM decisions", async () => {
       llmSpy = vi.spyOn(await import("../ai/decision-engine"), "generateLLMDecision").mockResolvedValue({
-        decision: { direction: "LONG", confidence: 0.9, strategy: "MOMENTUM", reasoning: "Strong" },
+        decision: { action: "OPEN", direction: "LONG", confidence: 0.9, strategy: "MOMENTUM", reasoning: "Strong" },
         provider: "gemini",
         providerAttempts: 1,
         errors: [],
@@ -401,7 +401,7 @@ describe("Trading Orchestrator", () => {
 
     it("records LLM decisions in history", async () => {
       llmSpy = vi.spyOn(await import("../ai/decision-engine"), "generateLLMDecision").mockResolvedValue({
-        decision: { direction: "SHORT", confidence: 0.65, strategy: "BREAKOUT", reasoning: "Volatility spike" },
+        decision: { action: "OPEN", direction: "SHORT", confidence: 0.65, strategy: "BREAKOUT", reasoning: "Volatility spike", tradePlan: { direction: "SHORT", entry: 63000, stopLoss: 64260, takeProfit: 60480, margin: 1, leverage: 5 } },
         provider: "cerebras",
         providerAttempts: 1,
         errors: [],
@@ -418,7 +418,7 @@ describe("Trading Orchestrator", () => {
 
     it("NO_TRADE from LLM skips paper execution", async () => {
       llmSpy = vi.spyOn(await import("../ai/decision-engine"), "generateLLMDecision").mockResolvedValue({
-        decision: { direction: "NO_TRADE", confidence: 0.2, strategy: "TREND_FOLLOWING", reasoning: "Uncertain" },
+        decision: { action: "WAIT", direction: "NO_TRADE", confidence: 0.2, strategy: "TREND_FOLLOWING", reasoning: "Uncertain" },
         provider: "groq",
         providerAttempts: 1,
         errors: [],
