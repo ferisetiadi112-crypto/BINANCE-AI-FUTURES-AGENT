@@ -51,6 +51,14 @@ import {
 import { deriveLessons } from "../ai/lesson-engine";
 import { buildExchangeContext } from "../ai/exchange-context";
 import { buildMarketContext } from "../ai/market-context";
+import {
+  startLatencyMeasurement,
+  recordLatencyStage,
+  completeLatencyMeasurement,
+} from "../ai/latency";
+import {
+  onDecisionComplete,
+} from "../ai/decision-scheduler";
 import { generateRealtimeMarketState } from "../services/data-adapter";
 import { getEnabledSymbols } from "../market/symbols";
 import { MarketScanner } from "../market/scanner";
@@ -620,7 +628,10 @@ export class TradingOrchestrator {
     // Record market scan event
     recordMarketScan(marketState.symbol, marketState.dataQuality);
 
-    // 1. Generate LLM Decision (with fallback to rule-based)
+    // P7D-5.4: Start latency measurement for this decision pipeline
+    startLatencyMeasurement(marketState.symbol);
+    recordLatencyStage("STATE_UPDATED");
+
     // P7D-5.2: Build exchange context for AI awareness (read-only)
     let exchangeContext: import("../ai/llm/prompt").ExchangeContextForPrompt | null = null;
     try {
@@ -637,9 +648,13 @@ export class TradingOrchestrator {
       logger.warn("orchestrator", `Failed to build market context for AI: ${err}`);
     }
 
+    recordLatencyStage("CONTEXT_BUILT");
+
     let decision: AiDecision;
     try {
+      recordLatencyStage("LLM_START");
       const routerResult = await generateLLMDecision(marketState, exchangeContext, aiMarketContext);
+      recordLatencyStage("LLM_RESPONSE");
 
       if (routerResult.provider === "safe_fallback") {
         logger.warn(
@@ -661,6 +676,10 @@ export class TradingOrchestrator {
       );
       decision = generateDecision(marketState);
     }
+
+    recordLatencyStage("DECISION_COMPLETED");
+    completeLatencyMeasurement();
+    onDecisionComplete();
 
     this.state.lastDecision = decision;
     this.decisionHistory.push(decision);
