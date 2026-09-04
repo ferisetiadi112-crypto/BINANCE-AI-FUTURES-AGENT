@@ -61,9 +61,14 @@ export function Topbar() {
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-hairline bg-background/80 px-3 backdrop-blur-xl">
       <SidebarTrigger className="text-muted-foreground hover:text-primary" />
 
-      {/* Live system strip — hidden on the smallest screens to keep the shell compact */}
-      <div className="hidden min-w-0 flex-1 items-center justify-start gap-4 overflow-hidden md:flex">
+      {/* Live system strip — visible on mobile with minimal text, expanded on desktop */}
+      <div className="min-w-0 flex-1 items-center justify-start gap-3 overflow-hidden flex-wrap md:flex md:items-center">
         <StatusChip label="AI" text={statusText} tone={statusTone} />
+        <StatusChip
+          label="WORK"
+          text={s?.currentTask ?? "—"}
+          tone={s?.status === "RUNNING" ? "gain" : "muted"}
+        />
         <StatusChip
           label="POSITION"
           text={s?.position ? `${s.position.side} ${s.position.symbol}` : "NONE"}

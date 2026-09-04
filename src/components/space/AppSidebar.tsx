@@ -33,12 +33,12 @@ const groups = [
     label: "Command",
     items: [
       { title: "Dashboard", url: "/", icon: LayoutDashboard },
-      { title: "AI Intelligence", url: "/ai-intelligence", icon: BrainCircuit },
-      { title: "Market Analysis", url: "/market-analysis", icon: Radar },
+      { title: "AI Agent", url: "/ai-intelligence", icon: BrainCircuit },
+      { title: "Market", url: "/market-analysis", icon: Radar },
     ],
   },
   {
-    label: "Execution",
+    label: "Trading",
     items: [
       { title: "Trading", url: "/trading", icon: CandlestickChart },
       { title: "Strategies", url: "/strategies", icon: LineChart },
@@ -48,7 +48,7 @@ const groups = [
   {
     label: "Cognition",
     items: [
-      { title: "Learning", url: "/learning", icon: Activity },
+      { title: "Performance", url: "/learning", icon: Activity },
       { title: "AI Logbook", url: "/ai-logbook", icon: ScrollText },
       { title: "AI Audit", url: "/ai-audit", icon: ScrollText },
     ],
@@ -58,7 +58,6 @@ const groups = [
     items: [
       { title: "Risk Center", url: "/risk-center", icon: ShieldAlert },
       { title: "Command Center", url: "/command-center", icon: Command },
-      { title: "System", url: "/system", icon: Cpu },
     ],
   },
 ];

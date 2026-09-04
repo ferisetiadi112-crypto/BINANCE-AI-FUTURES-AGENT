@@ -14,6 +14,7 @@ import { Route as AiAuditRouteImport } from './routes/ai-audit'
 import { Route as AiIntelligenceRouteImport } from './routes/ai-intelligence'
 import { Route as AiLogbookRouteImport } from './routes/ai-logbook'
 import { Route as CommandCenterRouteImport } from './routes/command-center'
+import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as LearningRouteImport } from './routes/learning'
 import { Route as MarketAnalysisRouteImport } from './routes/market-analysis'
 import { Route as RiskCenterRouteImport } from './routes/risk-center'
@@ -45,6 +46,11 @@ const AiLogbookRoute = AiLogbookRouteImport.update({
 const CommandCenterRoute = CommandCenterRouteImport.update({
   id: '/command-center',
   path: '/command-center',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardRoute = DashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LearningRoute = LearningRouteImport.update({
@@ -89,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/ai-intelligence': typeof AiIntelligenceRoute
   '/ai-logbook': typeof AiLogbookRoute
   '/command-center': typeof CommandCenterRoute
+  '/dashboard': typeof DashboardRoute
   '/learning': typeof LearningRoute
   '/market-analysis': typeof MarketAnalysisRoute
   '/risk-center': typeof RiskCenterRoute
@@ -103,6 +110,7 @@ export interface FileRoutesByTo {
   '/ai-intelligence': typeof AiIntelligenceRoute
   '/ai-logbook': typeof AiLogbookRoute
   '/command-center': typeof CommandCenterRoute
+  '/dashboard': typeof DashboardRoute
   '/learning': typeof LearningRoute
   '/market-analysis': typeof MarketAnalysisRoute
   '/risk-center': typeof RiskCenterRoute
@@ -118,6 +126,7 @@ export interface FileRoutesById {
   '/ai-intelligence': typeof AiIntelligenceRoute
   '/ai-logbook': typeof AiLogbookRoute
   '/command-center': typeof CommandCenterRoute
+  '/dashboard': typeof DashboardRoute
   '/learning': typeof LearningRoute
   '/market-analysis': typeof MarketAnalysisRoute
   '/risk-center': typeof RiskCenterRoute
@@ -134,6 +143,7 @@ export interface FileRouteTypes {
     | '/ai-intelligence'
     | '/ai-logbook'
     | '/command-center'
+    | '/dashboard'
     | '/learning'
     | '/market-analysis'
     | '/risk-center'
@@ -148,6 +158,7 @@ export interface FileRouteTypes {
     | '/ai-intelligence'
     | '/ai-logbook'
     | '/command-center'
+    | '/dashboard'
     | '/learning'
     | '/market-analysis'
     | '/risk-center'
@@ -162,6 +173,7 @@ export interface FileRouteTypes {
     | '/ai-intelligence'
     | '/ai-logbook'
     | '/command-center'
+    | '/dashboard'
     | '/learning'
     | '/market-analysis'
     | '/risk-center'
@@ -177,6 +189,7 @@ export interface RootRouteChildren {
   AiIntelligenceRoute: typeof AiIntelligenceRoute
   AiLogbookRoute: typeof AiLogbookRoute
   CommandCenterRoute: typeof CommandCenterRoute
+  DashboardRoute: typeof DashboardRoute
   LearningRoute: typeof LearningRoute
   MarketAnalysisRoute: typeof MarketAnalysisRoute
   RiskCenterRoute: typeof RiskCenterRoute
@@ -221,6 +234,13 @@ declare module '@tanstack/react-router' {
       path: '/command-center'
       fullPath: '/command-center'
       preLoaderRoute: typeof CommandCenterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard': {
+      id: '/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/learning': {
@@ -281,6 +301,7 @@ const rootRouteChildren: RootRouteChildren = {
   AiIntelligenceRoute: AiIntelligenceRoute,
   AiLogbookRoute: AiLogbookRoute,
   CommandCenterRoute: CommandCenterRoute,
+  DashboardRoute: DashboardRoute,
   LearningRoute: LearningRoute,
   MarketAnalysisRoute: MarketAnalysisRoute,
   RiskCenterRoute: RiskCenterRoute,

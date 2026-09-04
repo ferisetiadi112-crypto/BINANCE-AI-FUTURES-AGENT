@@ -142,7 +142,6 @@ function RootComponent() {
           <div className="flex min-w-0 flex-1 flex-col">
             <Topbar />
             <main className="scanlines relative flex-1 px-3 py-6 sm:px-6">
-              {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
               <Outlet />
             </main>
           </div>
