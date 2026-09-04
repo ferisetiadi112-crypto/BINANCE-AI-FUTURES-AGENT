@@ -189,9 +189,10 @@ export function resetLLMRouter(): void {
 export async function generateLLMDecision(
   marketState: MarketState,
   exchangeContext?: ExchangeContextForPrompt | null,
+  marketContext?: import("./llm/prompt").MarketContextForPrompt | null,
 ): Promise<RouterResult> {
   const router = getLLMRouter();
-  return router.route(marketState, exchangeContext);
+  return router.route(marketState, exchangeContext, marketContext);
 }
 
 /**

@@ -13,7 +13,7 @@
 
 import type { AIDecisionOutput, AIProvider, AIProviderName, ProviderError } from "./types";
 import { SAFE_FALLBACK } from "./types";
-import { buildTradingPrompt, type ExchangeContextForPrompt } from "./prompt";
+import { buildTradingPrompt, type ExchangeContextForPrompt, type MarketContextForPrompt } from "./prompt";
 import { getAvailableProviders } from "./providers";
 import type { MarketState } from "../../runtime/types";
 import { logger } from "../../logger";
@@ -51,10 +51,15 @@ export class AIRouter {
    *
    * @param marketState - Market data from runtime intelligence
    * @param exchangeContext - Optional P7D-5.2 exchange context for AI awareness
+   * @param marketContext - Optional P7D-5.3 realtime market context for AI awareness
    */
-  async route(marketState: MarketState, exchangeContext?: ExchangeContextForPrompt | null): Promise<RouterResult> {
+  async route(
+    marketState: MarketState,
+    exchangeContext?: ExchangeContextForPrompt | null,
+    marketContext?: MarketContextForPrompt | null,
+  ): Promise<RouterResult> {
     const startTime = Date.now();
-    const prompt = buildTradingPrompt(marketState, exchangeContext);
+    const prompt = buildTradingPrompt(marketState, exchangeContext, marketContext);
     const promptStr = JSON.stringify(prompt);
 
     const providers = this.providersOverride ?? getAvailableProviders();

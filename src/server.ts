@@ -5,6 +5,7 @@ import { renderErrorPage } from "./lib/error-page";
 import { startTradingRuntime } from "./backend/trading/runtime";
 import { initializeDatabase } from "./backend/database";
 import { initializeUnifiedState } from "./backend/exchange/unified-state";
+import { initializeMarketDataState } from "./backend/exchange/market-data-state";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -129,6 +130,11 @@ function initializeRuntimeInBackground(): Promise<void> {
       // This runs after runtime so the executor is available
       initializeUnifiedState().catch((err) => {
         console.error(`[server] Unified state init error: ${err}`);
+      });
+
+      // Step 4: Initialize market data state (market WebSocket + REST fallback)
+      initializeMarketDataState().catch((err) => {
+        console.error(`[server] Market data state init error: ${err}`);
       });
     } catch (err) {
       _runtimeError = `Runtime start failed: ${err}`;

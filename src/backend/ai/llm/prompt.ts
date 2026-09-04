@@ -52,6 +52,17 @@ export type ExchangeContextForPrompt = {
   dataFreshness: string;
 };
 
+/** P7D-5.3: Market context type for LLM prompt */
+export type MarketContextForPrompt = {
+  source: string;
+  available: boolean;
+  connection: { status: string; lastUpdateAt: string | null; subscribedSymbols: number };
+  dataFreshness: string;
+  symbols: Array<{ symbol: string; lastPrice: number; bid: number; ask: number; spread: number; volume24h: number; priceChange24h: number; priceChangePercent24h: number; high24h: number; low24h: number; updatedAt: string }>;
+  symbolCount: number;
+  primarySymbol: string | null;
+};
+
 /**
  * Build a concise trading prompt from real-time market state.
  *
@@ -61,10 +72,12 @@ export type ExchangeContextForPrompt = {
  *
  * @param market - Market state from runtime intelligence
  * @param exchangeContext - Optional exchange context from unified state (P7D-5.2)
+ * @param marketContext - Optional realtime market context from Binance Testnet (P7D-5.3)
  */
 export function buildTradingPrompt(
   market: MarketState,
   exchangeContext?: ExchangeContextForPrompt | null,
+  marketContext?: MarketContextForPrompt | null,
 ): { system: string; user: string } {
   let user = `MARKET DATA — ${market.symbol} at ${new Date(market.timestamp).toISOString()}
 
@@ -88,6 +101,17 @@ ${formatExchangeContextSection(exchangeContext)}`;
     user += `
 
 EXCHANGE: ${exchangeContext.connection.status} — Exchange data unavailable. Focus on market analysis only.`;
+  }
+
+  // P7D-5.3: Append realtime market context if available
+  if (marketContext && marketContext.available) {
+    user += `
+
+${formatMarketContextSection(marketContext)}`;
+  } else if (marketContext && !marketContext.available) {
+    user += `
+
+MARKET DATA: ${marketContext.connection.status} — Realtime market data unavailable.`;
   }
 
   user += `
@@ -118,6 +142,34 @@ function formatExchangeContextSection(ctx: ExchangeContextForPrompt): string {
     }
   } else {
     lines.push(`Positions: None`);
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * P7D-5.3: Format realtime market context as a structured section for the prompt.
+ */
+function formatMarketContextSection(ctx: MarketContextForPrompt): string {
+  const lines: string[] = [];
+
+  lines.push(`REALTIME MARKET — ${ctx.source}`);
+  lines.push(`Connection: ${ctx.connection.status} | Data: ${ctx.dataFreshness}`);
+
+  if (ctx.symbols.length > 0) {
+    lines.push(`Live Prices (${ctx.symbolCount} markets):`);
+    for (const sym of ctx.symbols) {
+      const change = sym.priceChangePercent24h >= 0
+        ? `+${sym.priceChangePercent24h.toFixed(2)}%`
+        : `${sym.priceChangePercent24h.toFixed(2)}%`;
+      lines.push(
+        `  ${sym.symbol}: $${sym.lastPrice.toFixed(2)} (${change}) | Bid: $${sym.bid.toFixed(2)} | Ask: $${sym.ask.toFixed(2)} | Spread: $${sym.spread.toFixed(4)}`,
+      );
+    }
+  }
+
+  if (ctx.dataFreshness === "STALE") {
+    lines.push(`⚠ WARNING: Market data is stale (>30s).`);
   }
 
   return lines.join("\n");

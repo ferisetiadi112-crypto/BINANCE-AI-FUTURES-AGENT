@@ -50,6 +50,7 @@ import {
 } from "../ai/experience-engine";
 import { deriveLessons } from "../ai/lesson-engine";
 import { buildExchangeContext } from "../ai/exchange-context";
+import { buildMarketContext } from "../ai/market-context";
 import { generateRealtimeMarketState } from "../services/data-adapter";
 import { getEnabledSymbols } from "../market/symbols";
 import { MarketScanner } from "../market/scanner";
@@ -628,9 +629,17 @@ export class TradingOrchestrator {
       logger.warn("orchestrator", `Failed to build exchange context for AI: ${err}`);
     }
 
+    // P7D-5.3: Build realtime market context for AI awareness (read-only)
+    let aiMarketContext: import("../ai/market-context").AiMarketContext | null = null;
+    try {
+      aiMarketContext = await buildMarketContext();
+    } catch (err) {
+      logger.warn("orchestrator", `Failed to build market context for AI: ${err}`);
+    }
+
     let decision: AiDecision;
     try {
-      const routerResult = await generateLLMDecision(marketState, exchangeContext);
+      const routerResult = await generateLLMDecision(marketState, exchangeContext, aiMarketContext);
 
       if (routerResult.provider === "safe_fallback") {
         logger.warn(
