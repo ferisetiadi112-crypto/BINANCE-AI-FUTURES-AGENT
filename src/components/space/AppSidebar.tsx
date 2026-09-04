@@ -1,4 +1,8 @@
 import { Link, useRouterState } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { fetchTestnetStatus } from "@/api/client";
+import { MAX_AUTO_RETRIES } from "@/lib/fetch-timeout";
+import { buildBinanceCard } from "@/lib/ui-state";
 import {
   Activity,
   BrainCircuit,
@@ -67,6 +71,21 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const pathname = useRouterState({ select: (r) => r.location.pathname });
 
+  // Live Binance connection state in the sidebar footer (shared query key
+  // with the dashboard — no duplicate requests, polling stops on unmount).
+  const { data: testnetResp, isPending, isError } = useQuery({
+    queryKey: ["testnet-status"],
+    queryFn: fetchTestnetStatus,
+    refetchInterval: 15_000,
+    retry: MAX_AUTO_RETRIES,
+  });
+  const binanceCard = buildBinanceCard(
+    { pending: isPending, failed: isError },
+    testnetResp?.data,
+  );
+  const connected = binanceCard.phase === "READY" || binanceCard.phase === "DEGRADED";
+  const connecting = binanceCard.phase === "LOADING";
+
   return (
     <Sidebar collapsible="icon" className="border-r border-hairline">
       <SidebarHeader className="border-b border-hairline bg-sidebar/60">
@@ -123,15 +142,32 @@ export function AppSidebar() {
           <div className="px-2 py-1.5">
             <div className="label-mono">Session</div>
             <div className="mt-1 font-mono text-[0.7rem] text-foreground/80">
-              NODE-07 · SIM MODE
+              NODE-07 · {binanceCard.mode === "—" ? "SIM" : binanceCard.mode} MODE
             </div>
-            <div className="mt-1 font-mono text-[0.65rem] text-muted-foreground">
-              No exchange connected
+            <div className="mt-1 flex items-center gap-1.5 font-mono text-[0.65rem] text-muted-foreground">
+              <span
+                className={`inline-block h-1.5 w-1.5 rounded-full ${
+                  connected
+                    ? "bg-gain"
+                    : connecting
+                      ? "bg-cyan-signal animate-pulse"
+                      : "bg-loss"
+                }`}
+              />
+              {connected
+                ? "Binance connected"
+                : connecting
+                  ? "Connecting to Binance Testnet..."
+                  : "Binance Testnet offline"}
             </div>
           </div>
         ) : (
           <div className="flex justify-center py-2">
-            <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-primary" />
+            <span
+              className={`pulse-dot h-1.5 w-1.5 rounded-full ${
+                connected ? "bg-gain" : connecting ? "bg-cyan-signal" : "bg-loss"
+              }`}
+            />
           </div>
         )}
       </SidebarFooter>

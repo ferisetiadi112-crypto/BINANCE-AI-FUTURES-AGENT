@@ -39,6 +39,12 @@ import { isTestnetConfigured } from "../exchange/binance-testnet";
 import { getJournalEvents, getRecentJournalEvents, getRecentJournalEventsAsync, type JournalEventType, type JournalImportance } from "../journal";
 import { getReviews } from "../journal/post-trade-review";
 import { getOrchestrator } from "../trading/runtime";
+import { getExchangeSnapshot } from "../exchange/unified-state";
+import {
+  getMarketSnapshot as getMarketDataStateSnapshot,
+  type SymbolMarketTick,
+} from "../exchange/market-data-state";
+import { computeEffectiveAllocation, computeAllocationRemaining } from "../risk/allocation";
 import { isPostgresConfigured } from "../database";
 import type { ApiResponse, LLMStatusResponse } from "../../types/api";
 import { bossGuardMiddleware } from "../auth/middleware";
@@ -53,6 +59,30 @@ async function wrap<T>(data: T): Promise<ApiResponse<T>> {
     timestamp: new Date().toISOString(),
     source: await getDataSource(),
   };
+}
+
+/**
+ * P7D-5.5: Bound an OPTIONAL server-side enrichment request.
+ * The enrichment (e.g. Binance open orders / realized PnL) may be slow or
+ * fail when the exchange is unreachable — it must never hang the endpoint
+ * or the dashboard. On timeout/error we return `fallback` immediately;
+ * the underlying request keeps running in the background harmlessly.
+ */
+async function bounded<T>(label: string, promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await new Promise<T>((resolve) => {
+      timer = setTimeout(() => {
+        resolve(fallback);
+      }, ms);
+      promise.then(
+        (value) => resolve(value),
+        () => resolve(fallback),
+      );
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // ─── GET /api/dashboard ───────────────────────────────────────────────
@@ -332,11 +362,14 @@ export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
   async () => {
     // P7D-5.1: Read from unified exchange state (cached, WebSocket-updated)
     // instead of making fresh REST calls to Binance on every request.
-    const { getExchangeSnapshot } = await import("../exchange/unified-state");
     const snapshot = getExchangeSnapshot();
 
-    // Also get open orders from executor (lightweight, not cached)
-    let openOrders: Array<{
+    // P7D-5.5: Optional enrichments (open orders, realized PnL) are read from
+    // the executor only when connected, and are BOUNDED — a slow or failing
+    // Binance never holds up this endpoint or the dashboard.
+    const ENRICH_BUDGET_MS = 4_000;
+
+    type OpenOrderLite = {
       orderId: number;
       symbol: string;
       side: string;
@@ -344,14 +377,20 @@ export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
       quantity: string;
       price: string;
       status: string;
-    }> = [];
+    };
+    const noOrders: OpenOrderLite[] = [];
+
+    // Also get open orders from executor (lightweight, not cached)
+    let openOrders: OpenOrderLite[] = [];
     if (snapshot.connected) {
-      try {
-        const executor = getTestnetExecutor();
-        const client = executor.getClient();
-        if (client?.isConnected()) {
+      openOrders = await bounded(
+        "testnet-status:open-orders",
+        (async () => {
+          const executor = getTestnetExecutor();
+          const client = executor.getClient();
+          if (!client?.isConnected()) return noOrders;
           const orders = await client.getOpenOrders();
-          openOrders = orders.map((o) => ({
+          return orders.map((o) => ({
             orderId: o.orderId,
             symbol: o.symbol,
             side: o.side,
@@ -360,30 +399,37 @@ export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
             price: o.price,
             status: o.status,
           }));
-        }
-      } catch {
-        // Open orders query failed — not critical
-      }
+        })(),
+        ENRICH_BUDGET_MS,
+        noOrders,
+      );
     }
 
     // P7D-3-FIX-REALIZED-PNL-2: Realized PnL from Binance Futures Testnet
     let realizedPnl: number | null = null;
     let realizedPnlStatus: "SUCCESS" | "ERROR" | "UNAVAILABLE" = "UNAVAILABLE";
     if (snapshot.connected) {
-      try {
-        const executor = getTestnetExecutor();
-        const pnlResult = await executor.getRealizedPnl();
-        realizedPnl = pnlResult.value;
-        realizedPnlStatus = pnlResult.status;
-      } catch {
-        // Realized PnL fetch failed
-      }
+      const pnlResult = await bounded(
+        "testnet-status:realized-pnl",
+        (async () => {
+          const executor = getTestnetExecutor();
+          return executor.getRealizedPnl();
+        })(),
+        ENRICH_BUDGET_MS,
+        { value: null, status: "UNAVAILABLE" as const, source: "unavailable", recordCount: 0 },
+      );
+      realizedPnl = pnlResult.value;
+      realizedPnlStatus = pnlResult.status;
     }
 
     return wrap({
       configured: snapshot.configured,
       connected: snapshot.connected,
+      // P7D-5.5: full account surface from the unified snapshot (single source)
       balance: snapshot.account.balance,
+      availableBalance: snapshot.account.availableBalance,
+      marginBalance: snapshot.account.marginBalance,
+      unrealizedPnl: snapshot.account.unrealizedPnl,
       positions: snapshot.positions,
       openOrders,
       paperTrading: process.env["PAPER_TRADING"] !== "false",
@@ -402,6 +448,53 @@ export const getTestnetStatus = createServerFn({ method: "GET" }).handler(
       connectionError: snapshot.lastError,
       consecutiveSyncFailures: snapshot.consecutiveFailures,
       isStale: snapshot.stale,
+    });
+  },
+);
+
+// ─── GET /api/market-status — P7D-5.3 Market Data Status ──────────
+// Read-only view of the market-data-state snapshot (WebSocket + REST
+// fallback). In-memory only — never performs a Binance call on request.
+
+export const getMarketStatus = createServerFn({ method: "GET" }).handler(
+  async () => {
+    const snapshot = getMarketDataStateSnapshot();
+
+    const ticks: Array<{
+      symbol: string;
+      lastPrice: number;
+      bid: number;
+      ask: number;
+      spread: number;
+      priceChangePercent24h: number;
+      volume24h: number;
+      quoteVolume24h: number;
+      updatedAt: number;
+    }> = [];
+    for (const symbol of snapshot.subscribedSymbols) {
+      const t: SymbolMarketTick | undefined = snapshot.symbols[symbol];
+      if (!t || !(t.lastPrice > 0)) continue;
+      ticks.push({
+        symbol: t.symbol,
+        lastPrice: t.lastPrice,
+        bid: t.bid,
+        ask: t.ask,
+        spread: t.spread,
+        priceChangePercent24h: t.priceChangePercent24h,
+        volume24h: t.volume24h,
+        quoteVolume24h: t.quoteVolume24h,
+        updatedAt: t.updatedAt,
+      });
+      if (ticks.length >= 8) break;
+    }
+
+    return wrap({
+      connectionStatus: snapshot.connectionStatus,
+      lastUpdateAt: snapshot.lastUpdateAt,
+      dataFreshness: snapshot.dataFreshness,
+      errorCount: snapshot.errorCount,
+      subscribedSymbols: snapshot.subscribedSymbols,
+      ticks,
     });
   },
 );
@@ -485,73 +578,68 @@ export const getOrchestratorData = createServerFn({ method: "GET" }).handler(
       });
     }
 
-    let account = null;
-    try {
-      account = await orchestrator.getBinanceAccountData();
-    } catch {
-      // Account data unavailable
-    }
+    // P7D-5.5: This endpoint never performs live Binance REST calls.
+    // Account + positions come from the unified exchange snapshot (P7D-5.1,
+    // WebSocket + bounded REST fallback) and risk state comes from the
+    // in-memory risk engine — everything is synchronous & instant, so a
+    // slow/failing Binance can never delay the dashboard's risk/account cards.
+    const snapshot = getExchangeSnapshot();
+    const riskEngine = orchestrator.getRiskEngine();
+    const riskStats = riskEngine.getDailyStats();
 
-    // P7D-3: Fetch open orders from Binance Testnet when connected
-    let openOrders: Array<{
-      orderId: number;
-      symbol: string;
-      side: string;
-      type: string;
-      quantity: string;
-      price: string;
-      stopPrice?: string;
-      status: string;
-      reduceOnly?: boolean;
-    }> = [];
+    // Real account surface is available once Binance has synced at least once.
+    const accountAvailable = snapshot.connected || snapshot.lastSyncTimestamp > 0;
+    const hasLiveSync = snapshot.connected && snapshot.lastSyncTimestamp > 0;
+    const effectiveAllocation = hasLiveSync
+      ? computeEffectiveAllocation(snapshot.account.availableBalance)
+      : 0;
+    const allocated = hasLiveSync ? riskEngine.getOpenPositionMargin() : 0;
 
-    if (orchestrator.isTestnetReady()) {
-      const executor = getTestnetExecutor();
-      const client = executor.getClient();
-      if (client?.isConnected()) {
-        try {
-          const orders = await client.getOpenOrders();
-          openOrders = orders.map((o) => ({
-            orderId: o.orderId,
-            symbol: o.symbol,
-            side: o.side,
-            type: o.type,
-            quantity: o.origQty,
-            price: o.price,
-            status: o.status,
-            reduceOnly: o.isReduceOnly,
-          }));
-        } catch {
-          // Open orders fetch failed — non-critical
-        }
-      }
-    }
-
-    // P7D-3-FIX-REALIZED-PNL-2: Fetch realized PnL from Binance Futures Testnet
-    // Returns structured result with distinct SUCCESS/ERROR/UNAVAILABLE statuses
-    let realizedPnl: number | null = null;
-    let realizedPnlStatus: "SUCCESS" | "ERROR" | "UNAVAILABLE" = "UNAVAILABLE";
-    if (orchestrator.isTestnetReady()) {
-      const executorForPnl = getTestnetExecutor();
-      const pnlResult = await executorForPnl.getRealizedPnl();
-      realizedPnl = pnlResult.value;
-      realizedPnlStatus = pnlResult.status;
-    }
+    const account = {
+      binanceAccount: accountAvailable
+        ? {
+            balance: snapshot.account.balance,
+            availableBalance: snapshot.account.availableBalance,
+            unrealizedPnl: snapshot.account.unrealizedPnl,
+            marginBalance: snapshot.account.marginBalance,
+            realizedPnl: null,
+            realizedPnlStatus: "UNAVAILABLE" as const,
+          }
+        : null,
+      aiAllocation: {
+        limit: riskEngine.getAiAllocationLimit(),
+        effectiveAllocation,
+        allocated,
+        available: computeAllocationRemaining(effectiveAllocation, allocated),
+        accountAvailable: hasLiveSync,
+      },
+      openPositions: snapshot.positions,
+      riskState: {
+        dailyPnl: riskStats.pnl,
+        sessionPnl: riskStats.sessionPnl,
+        isLocked: riskStats.locked,
+        lockReason: riskStats.lockReason ?? "",
+        cooldownActive: riskStats.cooldownActive,
+        cooldownEndsAt: riskStats.cooldownEndsAt,
+        hardCapReached: riskStats.hardCapReached,
+      },
+      connectionState: orchestrator.getConnectionState(),
+    };
 
     return wrap({
       running: true,
       account,
       recentActivity: orchestrator.getRecentActivity(),
       executionMode: orchestrator.getExecutionMode(),
-      testnetReady: orchestrator.isTestnetReady(),
-      tradingEnabled: orchestrator.getRiskEngine().isTradingEnabled(),
+      testnetReady: snapshot.connected,
+      tradingEnabled: riskEngine.isTradingEnabled(),
       // P7C: Include truthful connection-state
       connectionState: orchestrator.getConnectionState(),
-      // P7D-3: Open orders from Binance
-      openOrders,
-      // P7D-3-FIX-REALIZED-PNL-2: Realized PnL from Binance Futures Testnet
-      realizedPnl,
-      realizedPnlStatus,
+      // Legacy keys kept for shape compatibility (enrichment now lives on
+      // /api/testnet-status only, where it is bounded).
+      openOrders: [],
+      realizedPnl: null,
+      realizedPnlStatus: "UNAVAILABLE",
     });
   },
 );

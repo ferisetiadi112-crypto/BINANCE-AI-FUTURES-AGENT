@@ -5,27 +5,26 @@
  *   1. BINANCE FUTURES TESTNET
  *   2. AI ENGINE
  *
- * All readiness state, polling, and sessionStorage behavior are unchanged —
- * this is a presentation-layer redesign only.
+ * P7D-5.5: polling now runs through createPollController() — readiness state
+ * and stage reporting are unchanged, but a hard max-wait (12s) ALWAYS exits
+ * the boot screen, and every timer is disposed on unmount.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { fetchSystemReadiness } from "@/api/client";
-
-// ─── Types ──────────────────────────────────────────────────────────
-
-type StageStatus = "WAITING" | "ACTIVE" | "READY" | "ERROR";
-
-interface BootStage {
-  id: string;
-  label: string;
-  status: StageStatus;
-  message?: string | undefined;
-}
+import {
+  deriveBootStages,
+  allStagesReported,
+  type BootStage,
+} from "@/lib/boot-readiness";
+import { createPollController } from "@/lib/polling";
 
 // ─── Constants ──────────────────────────────────────────────────────
 
 const POLL_INTERVAL_MS = 1_500;
+// P7D-5.5: hard cap — the boot screen ALWAYS exits (at most) this long after
+// mounting, even if the readiness endpoint never reports. No infinite boot.
+const MAX_BOOT_WAIT_MS = 12_000;
 const STORAGE_KEY = "orbital_system_booted";
 const SEGMENTS = 20;
 
@@ -83,100 +82,68 @@ export function SystemBoot({ onReady }: SystemBootProps) {
     return () => clearInterval(id);
   }, [bootPhase]);
 
-  // Stage status helper
-  const updateStage = useCallback(
-    (id: string, status: StageStatus, message?: string) => {
-      setStages((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, status, message } : s)),
-      );
-    },
-    [],
-  );
-
-  // Poll readiness — P7D-5.1 Fast Boot.
-  // Transition when BOTH stages have reported (any status including ERROR).
-  // Don't wait for systemReady — that blocks on database + full runtime.
+  // Poll readiness — P7D-5.1 Fast Boot + P7D-5.5 no-infinite-loading guard.
+  // Transition when BOTH stages have reported (READY or ERROR); otherwise the
+  // controller's maxWaitMs hard cap forces the transition. Timers are owned
+  // by the controller and disposed on unmount.
   useEffect(() => {
     let cancelled = false;
-    let booted = false;
 
-    function doTransition() {
-      if (booted || cancelled) return;
-      booted = true;
-      setBootPhase("SYSTEM_READY");
-      setTimeout(() => {
-        if (!cancelled) {
-          setStoredBootState(true);
-          setBootPhase("TRANSITIONING");
-          setTimeout(() => {
-            if (!cancelled) onReady();
-          }, 600);
+    const controller = createPollController({
+      intervalMs: POLL_INTERVAL_MS,
+      maxWaitMs: MAX_BOOT_WAIT_MS,
+      onPoll: async () => {
+        if (cancelled) return true;
+        try {
+          const resp = await fetchSystemReadiness();
+          if (cancelled) return true;
+
+          const data = resp?.data;
+          if (!data) return false;
+
+          const next = deriveBootStages(data);
+          if (next) setStages(next);
+
+          if (data.error) {
+            setError(data.error);
+          }
+
+          // P7D-5.1: Both stages have reported (READY or ERROR) — done.
+          return allStagesReported(next);
+        } catch {
+          // Server might not be ready yet — keep polling
+          return false;
         }
-      }, 600);
-    }
-
-    // Maximum boot timeout — force transition after 12 seconds
-    const maxTimeout = setTimeout(doTransition, 12_000);
-
-    async function poll() {
-      try {
-        const resp = await fetchSystemReadiness();
+      },
+      onDone: () => {
         if (cancelled) return;
+        setBootPhase("SYSTEM_READY");
+      },
+    });
 
-        const data = resp?.data;
-        if (!data) return;
-
-        // 1. BINANCE FUTURES TESTNET
-        if (!data.binanceConfigured) {
-          updateStage("binance", "READY", "PAPER MODE — Not configured");
-        } else if (data.binanceConnected) {
-          updateStage("binance", "READY", "CONNECTED");
-        } else if (data.runtimeReady) {
-          // Runtime is ready but Binance not connected — show ERROR
-          updateStage("binance", "ERROR", "OFFLINE");
-        } else {
-          updateStage("binance", "ACTIVE", "CONNECTING...");
-        }
-
-        // 2. AI ENGINE
-        if (data.aiRuntimeOnline) {
-          updateStage("ai-engine", "READY", "ONLINE");
-        } else if (data.runtimeReady) {
-          updateStage("ai-engine", "READY", "ONLINE");
-        } else {
-          updateStage("ai-engine", "ACTIVE", "INITIALIZING...");
-        }
-
-        // Check for errors
-        if (data.error) {
-          setError(data.error);
-        }
-
-        // P7D-5.1: Transition when BOTH stages have reported their status
-        // (either READY or ERROR) — don't require systemReady
-        const binanceReported = stages.some(
-          (s) => s.id === "binance" && (s.status === "READY" || s.status === "ERROR"),
-        );
-        const aiReported = stages.some(
-          (s) => s.id === "ai-engine" && (s.status === "READY" || s.status === "ERROR"),
-        );
-        if (binanceReported && aiReported) {
-          doTransition();
-        }
-      } catch {
-        // Server might not be ready yet — keep polling
-      }
-    }
-
-    poll();
-    const interval = setInterval(poll, POLL_INTERVAL_MS);
+    controller.start();
 
     return () => {
       cancelled = true;
-      clearTimeout(maxTimeout);
-      clearInterval(interval);
+      controller.dispose();
     };
-  }, [updateStage, onReady, stages]);
+  }, [onReady]);
+
+  // Cinematic exit once the boot sequence reports ready.
+  useEffect(() => {
+    if (bootPhase !== "SYSTEM_READY") return;
+    const toTransition = setTimeout(() => {
+      setStoredBootState(true);
+      setBootPhase("TRANSITIONING");
+    }, 700);
+    const toReady = setTimeout(() => {
+      onReady();
+    }, 1_500);
+    return () => {
+      clearTimeout(toTransition);
+      clearTimeout(toReady);
+    };
+  }, [bootPhase, onReady]);
 
   // ─── Derived presentation values ────
 
