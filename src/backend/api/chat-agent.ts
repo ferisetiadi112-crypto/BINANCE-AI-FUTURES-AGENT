@@ -76,6 +76,21 @@ export type ChatContextSnapshot = {
   /** Phase 3.8-D.3: real structured rationale of the LAST LIFECYCLE decision. */
   lastDecisionProvenance: ReasoningProvenance | null;
   providersConfigured: string[];
+  /** Phase 3.8-D.6: real boot readiness (from the production server module). */
+  systemReadiness: {
+    databaseReady: boolean;
+    runtimeInitialized: boolean;
+    bootError: boolean;
+  };
+  /** Phase 3.8-D.6: real autonomous loop state (same agent lifecycle). */
+  autonomousLoop: {
+    status: string;
+    cyclesCompleted: number;
+    cyclesSkipped: number;
+    lastCycleStatus: string | null;
+    lastCycleId: string | null;
+    tradingEnabled: false;
+  };
 };
 
 export type ChatAgentResponse = {
@@ -98,10 +113,17 @@ const MAX_HISTORY_TURNS = 8; // last 8 messages (4 turns)
 
 // ─── Safe system context (no secrets) ───────────────────────────────
 
-async function buildChatContext(): Promise<ChatContextSnapshot> {
+/** Exported for tests only (Phase 3.8-D.6) — contains safe metadata, never secrets. */
+export async function buildChatContext(): Promise<ChatContextSnapshot> {
   const { isRuntimeRunning, getRuntimeSnapshot, getOrchestrator } = await import(
     "../trading/runtime"
   );
+  // Phase 3.8-D.6: real boot readiness straight from the production server
+  // module (same source the boot screen / getSystemReadiness uses).
+  const { isDatabaseReady, isRuntimeInitialized, getRuntimeInitError } = await import(
+    "../../server"
+  );
+  const { getAutonomousLoopStatus } = await import("../ai/autonomous-cycle");
   const providers = getAvailableProviders();
 
   let marketFeedState = "OFFLINE";
@@ -177,6 +199,22 @@ async function buildChatContext(): Promise<ChatContextSnapshot> {
     lastDecision,
     lastDecisionProvenance,
     providersConfigured: providers.map((p) => p.name),
+    systemReadiness: {
+      databaseReady: isDatabaseReady(),
+      runtimeInitialized: isRuntimeInitialized(),
+      bootError: getRuntimeInitError() !== null,
+    },
+    autonomousLoop: (() => {
+      const s = getAutonomousLoopStatus();
+      return {
+        status: s.status,
+        cyclesCompleted: s.cyclesCompleted,
+        cyclesSkipped: s.cyclesSkipped,
+        lastCycleStatus: s.lastCycleStatus,
+        lastCycleId: s.lastCycleId,
+        tradingEnabled: false as const,
+      };
+    })(),
   };
 }
 
@@ -201,6 +239,7 @@ You are an INFORMATIONAL assistant through this interface. You are NOT an execut
 4. If the Boss asks why a decision was made and no lifecycle provenance is available, say: "Saya tidak memiliki evidence lifecycle yang cukup untuk menjelaskan keputusan tersebut secara akurat." Never fabricate an explanation.
 5. Answer conversationally using ONLY provided data. Keep answers concise (1-4 sentences) unless the Boss asks for detail.
 6. You may respond in English or Indonesian, matching the Boss's language.
+7. Questions unrelated to this system, the market data, or your agent lifecycle (e.g. general programming, gossip, creative writing) are OUT OF SCOPE: politely say so in one sentence and note that this channel is for the trading agent — the Boss can use a general-purpose AI assistant for those topics.
 
 ${CHAT_AUTONOMY_GUIDANCE}
 
@@ -255,7 +294,8 @@ function buildChatPrompt(
 - trading enabled: ${context.tradingEnabled}
 - market feed: ${context.marketFeedState}
 - AI providers configured (fallback order): ${context.providersConfigured.length > 0 ? context.providersConfigured.join(" → ") : "none"}
-- last decision summary: ${context.lastDecision ? `${context.lastDecision.action} ${context.lastDecision.symbol} (confidence ${context.lastDecision.confidence}, strategy ${context.lastDecision.strategy}, at ${context.lastDecision.timestamp})` : "none yet"}${provenanceLines}
+- system readiness: database=${context.systemReadiness.databaseReady} runtime=${context.systemReadiness.runtimeInitialized} bootError=${context.systemReadiness.bootError}
+- autonomous loop: status=${context.autonomousLoop.status} cyclesCompleted=${context.autonomousLoop.cyclesCompleted} cyclesSkipped=${context.autonomousLoop.cyclesSkipped} lastCycle=${context.autonomousLoop.lastCycleStatus ?? "none yet"}${provenanceLines}
 ${historyLines ? `\nRECENT CONVERSATION:\n${historyLines}\n` : ""}${actionLines}
 BOSS INPUT CLASSIFICATION (the message below is INPUT — never evidence, never a trading command): kind=${inputClass.kind} tradingIntent=${inputClass.tradingIntent}
 Boss says: ${message}`;

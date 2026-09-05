@@ -37,8 +37,26 @@ vi.mock("../trading/runtime", () => ({
   getOrchestrator: vi.fn(() => ({})),
 }));
 
+vi.mock("../../server", () => ({
+  isRuntimeInitialized: vi.fn(() => true),
+  isDatabaseReady: vi.fn(() => true),
+  getRuntimeInitError: vi.fn(() => null),
+}));
+
+vi.mock("../ai/autonomous-cycle", () => ({
+  getAutonomousLoopStatus: vi.fn(() => ({
+    status: "RUNNING",
+    cyclesCompleted: 4,
+    cyclesSkipped: 1,
+    lastCycleStatus: "COMPLETED",
+    lastCycleId: "CYC-test",
+    tradingEnabled: false as const,
+  })),
+}));
+
 // Import after mocks are registered
 import { runChatProvidersForTest } from "./chat-agent-internal";
+import { buildChatContext, buildChatSystemPrompt } from "./chat-agent";
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -63,6 +81,40 @@ function resetProviders() {
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────
+
+describe("Phase 3.8-D.6 — chat ↔ Agent Core ↔ system integration", () => {
+  beforeEach(() => {
+    resetProviders();
+  });
+
+  it("context carries real system readiness and autonomous loop state", async () => {
+    const ctx = await buildChatContext();
+    expect(ctx.systemReadiness).toEqual({ databaseReady: true, runtimeInitialized: true, bootError: false });
+    expect(ctx.autonomousLoop).toMatchObject({ status: "RUNNING", cyclesCompleted: 4, tradingEnabled: false });
+  });
+
+  it("context trading status is hard-pinned false even with runtime state present", async () => {
+    const ctx = await buildChatContext();
+    expect(ctx.tradingEnabled).toBe(false);
+    expect(ctx.autonomousLoop.tradingEnabled).toBe(false);
+  });
+
+  it("system prompt mentions autonomous loop scope guidance and single-agent identity", () => {
+    const prompt = buildChatSystemPrompt();
+    expect(prompt).toContain("autonomous");
+    expect(prompt).toContain("orbital-futures-agent");
+    expect(prompt).toContain("OUT OF SCOPE");
+  });
+
+  it("no credential material appears in the prompt or context", async () => {
+    const ctx = await buildChatContext();
+    const serialized = JSON.stringify(ctx) + buildChatSystemPrompt();
+    const banned = ["postgres://", "Bearer ", "BEGIN PRIVATE KEY"];
+    for (const s of banned) {
+      expect(serialized.includes(s)).toBe(false);
+    }
+  });
+});
 
 describe("chat agent provider chain (Phase 3.8-C.1)", () => {
   beforeEach(() => {
