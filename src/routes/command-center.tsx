@@ -84,16 +84,29 @@ const eventTypeLabel = (type: string) => {
 function CommandCenter() {
   const queryClient = useQueryClient();
 
-  const { data: walletResponse, isLoading: walletLoading } = useQuery({
+  // Phase 3.5-P: Per-source loading/error isolation. No global loading gate —
+  // a hanging/failing wallet or audit query must never block the page shell,
+  // the Testnet cards, or any other data source.
+  const {
+    data: walletResponse,
+    isPending: walletLoading,
+    isError: walletError,
+  } = useQuery({
     queryKey: ["wallet-status"],
     queryFn: fetchWalletStatus,
     refetchInterval: 5000,
+    retry: 1,
   });
 
-  const { data: auditResponse, isLoading: auditLoading } = useQuery({
+  const {
+    data: auditResponse,
+    isPending: auditLoading,
+    isError: auditError,
+  } = useQuery({
     queryKey: ["audit-trail"],
     queryFn: fetchAuditTrail,
     refetchInterval: 3000,
+    retry: 1,
   });
 
   const topUpMutation = useMutation({
@@ -114,10 +127,15 @@ function CommandCenter() {
     },
   });
 
-  const { data: testnetResponse } = useQuery({
+  const {
+    data: testnetResponse,
+    isPending: testnetLoading,
+    isError: testnetError,
+  } = useQuery({
     queryKey: ["testnet-status"],
     queryFn: fetchTestnetStatus,
     refetchInterval: 10_000,
+    retry: 1,
   });
 
   const wallet = walletResponse?.data;
@@ -127,31 +145,48 @@ function CommandCenter() {
   // Phase 3.5-N: Testnet cards read the stateless, authenticated
   // testnet.diagnostics block (authoritative in production) instead of the
   // possibly-empty in-memory unified snapshot. Safe unavailable fallbacks.
+  // Phase 3.5-P: explicit per-source states — testnet loading/error only
+  // affects the Testnet cards and never uses wallet/audit state as a gate.
   const testnetCard = buildTestnetCardData(testnet);
   const testnetStatusSub = testnetCard.openOrderCount !== null
     ? `${testnetCard.openOrderCount} open order(s)`
-    : testnet?.paperTrading === false
-      ? "Live testnet connection"
+    : testnetError
+      ? "Binance data unavailable"
       : "Checking Binance Testnet...";
   const testnetBalanceValue = testnetCard.balanceAvailable && testnetCard.balance !== null
     ? money(testnetCard.balance)
-    : testnet
-      ? "Waiting for Binance data"
-      : "Unavailable";
+    : testnetError
+      ? "Binance data unavailable"
+      : testnet
+        ? "Waiting for Binance data"
+        : "Checking Binance Testnet...";
   const testnetPositionsSub = testnetCard.positionCount !== null
     ? testnetCard.position
       ? `${testnetCard.position.symbol} ${testnetCard.position.side} qty ${testnetCard.position.quantity}`
       : `${testnetCard.positionCount} open position(s)`
-    : "Waiting for Binance data";
+    : testnetError
+      ? "Binance data unavailable"
+      : "Checking Binance Testnet...";
   const unrealizedPnlValue = testnetCard.unrealizedPnl !== null
     ? money(testnetCard.unrealizedPnl)
-    : "Waiting for Binance data";
+    : testnetError
+      ? "Binance data unavailable"
+      : "Waiting for Binance data";
   const unrealizedPnlTone =
     testnetCard.unrealizedPnl === null
       ? "default"
       : testnetCard.unrealizedPnl < 0
         ? "loss"
         : "gain";
+
+  // Phase 3.5-P: per-source Wallet values — no fake $0.00 while loading/error.
+  const walletBalanceValue = wallet
+    ? money(wallet.balance)
+    : walletError
+      ? "Wallet data unavailable"
+      : "Loading wallet...";
+  const walletTopUpValue = wallet ? money(wallet.totalTopUp) : walletLoading ? "Loading wallet..." : "—";
+  const walletWithdrawnValue = wallet ? money(wallet.totalWithdraw) : walletLoading ? "Loading wallet..." : "—";
 
   const [topUpAmount, setTopUpAmount] = useState("");
   const [topUpNote, setTopUpNote] = useState("");
@@ -177,24 +212,6 @@ function CommandCenter() {
     setWithdrawNote("");
   };
 
-  if (walletLoading || auditLoading) {
-    return (
-      <div className="mx-auto max-w-[110rem]">
-        <PageHeader
-          eyebrow="System · Command Center"
-          title="Command Center"
-          desc="Loading..."
-        />
-        <div className="flex items-center justify-center py-20">
-          <div className="pulse-dot h-4 w-4 rounded-full bg-primary" />
-          <span className="ml-3 font-mono text-sm text-muted-foreground">
-            Initializing command center...
-          </span>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="mx-auto max-w-[110rem]">
       <PageHeader
@@ -207,21 +224,21 @@ function CommandCenter() {
       <div className="grid gap-3 lg:grid-cols-4">
         <Stat
           label="Wallet Balance"
-          value={wallet ? money(wallet.balance) : "$0.00"}
-          sub={`Initial: ${wallet ? money(wallet.initialCapital) : "$5.00"}`}
+          value={walletBalanceValue}
+          sub={wallet ? `Initial: ${money(wallet.initialCapital)}` : walletLoading ? "Loading wallet..." : "Wallet status unavailable"}
           icon={<Wallet className="h-4 w-4" />}
         />
         <Stat
           label="Total Top-Up"
-          value={wallet ? money(wallet.totalTopUp) : "$0.00"}
-          sub={`${wallet?.transactionCount ?? 0} transactions`}
+          value={walletTopUpValue}
+          sub={wallet ? `${wallet.transactionCount ?? 0} transactions` : ""}
           tone="gain"
           icon={<TrendingUp className="h-4 w-4" />}
         />
         <Stat
           label="Total Withdrawn"
-          value={wallet ? money(wallet.totalWithdraw) : "$0.00"}
-          sub={`Net: ${wallet ? money(wallet.netChange) : "$0.00"}`}
+          value={walletWithdrawnValue}
+          sub={wallet ? `Net: ${money(wallet.netChange)}` : ""}
           tone="loss"
           icon={<TrendingDown className="h-4 w-4" />}
         />
@@ -459,7 +476,15 @@ function CommandCenter() {
       {/* ─── Audit Trail & Activity Log ─────────────────────────── */}
       <div className="mt-4">
         <Panel title="Audit Trail & Activity Log" code="PHASE 9D">
-          {auditEvents.length === 0 ? (
+          {auditError ? (
+            <div className="py-8 text-center font-mono text-sm text-loss">
+              Audit trail unavailable.
+            </div>
+          ) : auditLoading ? (
+            <div className="py-8 text-center font-mono text-sm text-muted-foreground">
+              Loading audit trail...
+            </div>
+          ) : auditEvents.length === 0 ? (
             <div className="py-8 text-center font-mono text-sm text-muted-foreground">
               No activity yet. Guardrail events and wallet transactions will
               appear here.

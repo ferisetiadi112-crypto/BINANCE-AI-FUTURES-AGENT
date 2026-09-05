@@ -96,6 +96,25 @@ describe("buildTestnetCardData", () => {
     expect(card.balanceAvailable).toBe(false);
   });
 
+  it("Phase 3.5-P: testnet error payload (no data) → explicit unavailable, no fake $0.00", () => {
+    // Simulates the component passing undefined when the testnet query errored
+    // — must never present $0.00 as a live Binance balance.
+    const card = buildTestnetCardData(undefined);
+    expect(card.balanceAvailable).toBe(false);
+    expect(card.balance).toBeNull();
+    expect(card.statusLabel).toBe("NOT CONFIGURED");
+  });
+
+  it("Phase 3.5-P: mapping is independent of wallet/audit payloads (isolation)", () => {
+    // The mapping only receives the testnet payload — wallet/audit loading or
+    // errors cannot change its output by construction.
+    const card = buildTestnetCardData({ diagnostics: liveDiagnostics });
+    expect(card.statusLabel).toBe("LIVE");
+    expect(card.balance).toBe(5000);
+    // Same input, same output — no hidden dependency on other query states.
+    expect(buildTestnetCardData({ diagnostics: liveDiagnostics })).toEqual(card);
+  });
+
   it("falls back to a genuinely connected snapshot when diagnostics is absent", () => {
     const card = buildTestnetCardData({
       configured: true,
