@@ -87,6 +87,26 @@ export type TestnetDiagnostics = {
   checks: Record<string, CheckStatus>;
 };
 
+/**
+ * Phase 3.5-Q: Binance's actual /fapi/v2/account payload uses
+ * `positionAmt` and `unrealizedProfit`, while the client's TypeScript
+ * type declares `positionAmount`/`unRealizedProfit`. Read both names
+ * defensively so a wrong type declaration can never yield NaN or a
+ * fabricated 0 PnL. Returns null when neither field is present/numeric.
+ */
+function readPositionNumeric(
+  p: Record<string, unknown>,
+  primary: string,
+  fallback: string,
+): number | null {
+  for (const key of [primary, fallback]) {
+    const raw = p[key];
+    const n = typeof raw === "number" ? raw : typeof raw === "string" ? parseFloat(raw) : NaN;
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
 /** Extract a safe, non-credential error message. */
 function safeError(err: unknown): string {
   if (err instanceof Error) {
@@ -241,18 +261,21 @@ export async function buildTestnetDiagnostics(): Promise<TestnetDiagnostics> {
     }
 
     // ── Positions (read-only; account.positions, zero-amount filtered) ──
-    const positions = (account.positions ?? []).filter(
-      (p) => parseFloat(p.positionAmount) !== 0,
-    );
+    // Phase 3.5-Q: read position size via both real (positionAmt) and
+    // type-declared (positionAmount) field names — never NaN.
+    const posList = (account.positions ?? []) as Array<Record<string, unknown> & { symbol?: string; entryPrice?: string }>;
+    const positions = posList.filter((p) => (readPositionNumeric(p, "positionAmt", "positionAmount") ?? 0) !== 0);
     const pos = positions[0];
+    const posQty = pos ? readPositionNumeric(pos, "positionAmt", "positionAmount") : null;
+    const posPnl = pos ? readPositionNumeric(pos, "unrealizedProfit", "unRealizedProfit") : null;
     diag.position = {
       readable: true,
       hasPosition: positions.length > 0,
       symbol: pos?.symbol ?? null,
-      side: pos ? (parseFloat(pos.positionAmount) > 0 ? "LONG" : "SHORT") : null,
-      quantity: pos ? Math.abs(parseFloat(pos.positionAmount)) : null,
-      entryPrice: pos ? parseFloat(pos.entryPrice) : null,
-      unrealizedPnl: pos ? parseFloat(pos.unRealizedProfit ?? "0") : null,
+      side: posQty !== null ? (posQty > 0 ? "LONG" : "SHORT") : null,
+      quantity: posQty !== null ? Math.abs(posQty) : null,
+      entryPrice: pos?.entryPrice != null && Number.isFinite(parseFloat(pos.entryPrice)) ? parseFloat(pos.entryPrice) : null,
+      unrealizedPnl: posPnl,
     };
     checks["position"] = "PASS";
   } catch (err) {

@@ -5,6 +5,7 @@
  *   A. authenticated diagnostics → LIVE + balance + position
  *   B. diagnostics unavailable → safe unavailable state, no fake $0.00
  *   C. authenticated=false → NOT CONFIGURED
+ *   3.5-Q: live position mapping — NaN/quantity/PnL (Cases A–F)
  */
 import { describe, expect, it } from "vitest";
 import { buildTestnetCardData } from "./testnet-card-mapping";
@@ -127,5 +128,142 @@ describe("buildTestnetCardData", () => {
     expect(card.balance).toBe(4200);
     expect(card.positionCount).toBe(1);
     expect(card.unrealizedPnl).toBe(12.5);
+  });
+
+  // ─── Phase 3.5-Q — live position mapping (NaN / PnL) ───────────────
+
+  it("CASE A (3.5-Q): live SHORT position with finite PnL renders correctly", () => {
+    const card = buildTestnetCardData({
+      diagnostics: {
+        ...liveDiagnostics,
+        position: {
+          readable: true,
+          hasPosition: true,
+          symbol: "SNTUSDT",
+          side: "SHORT",
+          quantity: 7,
+          entryPrice: 0.5,
+          unrealizedPnl: -2.34,
+        },
+      },
+    });
+
+    expect(card.statusLabel).toBe("LIVE");
+    expect(card.position).toEqual({
+      symbol: "SNTUSDT",
+      side: "SHORT",
+      quantity: 7,
+      unrealizedPnl: -2.34,
+    });
+    expect(card.unrealizedPnl).toBe(-2.34);
+    expect(Number.isFinite(card.position!.quantity)).toBe(true);
+  });
+
+  it("CASE B (3.5-Q): no position → 0 open positions, no fabricated PnL", () => {
+    const card = buildTestnetCardData({
+      diagnostics: {
+        ...liveDiagnostics,
+        position: {
+          readable: true,
+          hasPosition: false,
+          symbol: null,
+          side: null,
+          quantity: null,
+          entryPrice: null,
+          unrealizedPnl: null,
+        },
+      },
+    });
+
+    expect(card.positionCount).toBe(0);
+    expect(card.position).toBeNull();
+    expect(card.unrealizedPnl).toBeNull();
+  });
+
+  it("CASE C (3.5-Q): malformed/missing quantity → safe unavailable, NEVER NaN", () => {
+    const card = buildTestnetCardData({
+      diagnostics: {
+        ...liveDiagnostics,
+        position: {
+          readable: true,
+          hasPosition: true,
+          symbol: "SNTUSDT",
+          side: "SHORT",
+          quantity: NaN,
+          entryPrice: null,
+          unrealizedPnl: NaN,
+        },
+      },
+    });
+
+    expect(card.position).toBeNull();
+    expect(card.positionCount).toBe(0);
+    expect(card.unrealizedPnl).toBeNull();
+  });
+
+  it("CASE D (3.5-Q): quantity as numeric string \"7\" → 7, not NaN", () => {
+    const card = buildTestnetCardData({
+      diagnostics: {
+        ...liveDiagnostics,
+        position: {
+          readable: true,
+          hasPosition: true,
+          symbol: "SNTUSDT",
+          side: "SHORT",
+          quantity: "7" as unknown as number,
+          entryPrice: null,
+          unrealizedPnl: "-1.5" as unknown as number,
+        },
+      },
+    });
+
+    expect(card.position).toEqual({
+      symbol: "SNTUSDT",
+      side: "SHORT",
+      quantity: 7,
+      unrealizedPnl: -1.5,
+    });
+  });
+
+  it("CASE E (3.5-Q): signed positionAmt (negative = SHORT) → absolute quantity, side preserved", () => {
+    const card = buildTestnetCardData({
+      diagnostics: {
+        ...liveDiagnostics,
+        position: {
+          readable: true,
+          hasPosition: true,
+          symbol: "SNTUSDT",
+          side: "SHORT",
+          quantity: -7,
+          entryPrice: null,
+          unrealizedPnl: 3.21,
+        },
+      },
+    });
+
+    expect(card.position!.quantity).toBe(7);
+    expect(card.position!.side).toBe("SHORT");
+    expect(card.unrealizedPnl).toBe(3.21);
+  });
+
+  it("CASE F (3.5-Q): missing PnL → null (unavailable), never fabricated $0.00-as-live", () => {
+    const card = buildTestnetCardData({
+      diagnostics: {
+        ...liveDiagnostics,
+        position: {
+          readable: true,
+          hasPosition: true,
+          symbol: "SNTUSDT",
+          side: "SHORT",
+          quantity: 7,
+          entryPrice: null,
+          unrealizedPnl: null,
+        },
+      },
+    });
+
+    expect(card.position).not.toBeNull();
+    expect(card.position!.quantity).toBe(7);
+    expect(card.unrealizedPnl).toBeNull();
   });
 });

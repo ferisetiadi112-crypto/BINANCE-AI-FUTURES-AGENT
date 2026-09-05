@@ -87,6 +87,20 @@ const UNAVAILABLE: TestnetCardData = {
 };
 
 /**
+ * Phase 3.5-Q: robust numeric coercion for live Binance position values.
+ *
+ * Binance Futures account payloads carry position/PnL values as STRINGS
+ * (e.g. positionAmount: "-7.000", unRealizedProfit: "-1.234").
+ * parseFloat(undefined/empty) === NaN, and `typeof NaN === "number"`, so a
+ * plain typeof guard lets NaN slip through and render as "qty NaN".
+ * This helper accepts finite numbers or numeric strings and rejects NaN.
+ */
+function toFiniteNumber(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" ? parseFloat(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
  * Build the Testnet card data from the getTestnetStatus payload.
  * Diagnostics (stateless, authenticated per-request) wins over the
  * possibly-empty in-memory snapshot.
@@ -144,23 +158,30 @@ export function buildTestnetCardData(
     authenticated && diag.account?.balanceReadable === true && typeof diag.account?.balance === "number";
   const balance = balanceAvailable ? diag.account!.balance! : null;
 
-  // Positions (priority C) — diagnostics carries a single position summary
+  // Positions (priority C) — diagnostics carries a single position summary.
+  // Phase 3.5-Q: quantity is coerced through toFiniteNumber (Binance sends
+  // strings; NaN/undefined must never render as "qty NaN").
   const pos = diag.position;
   const positionReadable = authenticated && pos?.readable === true;
+  const rawQty = positionReadable ? toFiniteNumber(pos?.quantity) : null;
+  // Signed positionAmt: negative = SHORT. Display size is always absolute.
+  const quantity = rawQty !== null ? Math.abs(rawQty) : null;
   const position =
-    positionReadable && pos?.hasPosition && pos.symbol && pos.side && typeof pos.quantity === "number"
+    positionReadable && pos?.hasPosition && pos?.symbol && pos?.side && quantity !== null && quantity > 0
       ? {
           symbol: pos.symbol,
           side: pos.side,
-          quantity: pos.quantity,
-          unrealizedPnl: typeof pos.unrealizedPnl === "number" ? pos.unrealizedPnl : 0,
+          quantity,
+          unrealizedPnl: toFiniteNumber(pos.unrealizedPnl) ?? 0,
         }
       : null;
-  const positionCount = positionReadable ? (pos!.hasPosition ? 1 : 0) : null;
+  const positionCount = positionReadable ? (pos!.hasPosition && quantity !== null && quantity > 0 ? 1 : 0) : null;
 
-  // Unrealized PnL (priority E) — only from the confirmed live position
-  const unrealizedPnl =
-    position && typeof pos!.unrealizedPnl === "number" ? pos!.unrealizedPnl! : null;
+  // Unrealized PnL (priority E) — only from a confirmed live position.
+  // Phase 3.5-Q: a non-finite/missing PnL maps to null ("Waiting for Binance
+  // data"), never to a fabricated $0.00.
+  const rawUnrealized = position ? toFiniteNumber(pos!.unrealizedPnl) : null;
+  const unrealizedPnl = position && rawUnrealized !== null ? rawUnrealized : null;
 
   // Open orders (priority D)
   const openOrderCount =
