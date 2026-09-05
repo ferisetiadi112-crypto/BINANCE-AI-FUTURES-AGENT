@@ -431,6 +431,17 @@ describe("P7D-1 Security Audit: No mainnet in execution path", () => {
     expect(testnetUrl).not.toBe(mainnetUrl);
   });
 
+  it("verify binance-market.ts BASE_URL points to testnet, never mainnet", async () => {
+    // Static source audit: the market-data adapter must target the testnet host.
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(
+      new URL("../exchange/binance-market.ts", import.meta.url),
+      "utf-8",
+    );
+    expect(source).toContain('"https://testnet.binancefuture.com"');
+    expect(source).not.toContain('"https://fapi.binance.com"');
+  });
+
   it("verify execution endpoint is testnet only", () => {
     const TESTNET_REST_URL = "https://testnet.binancefuture.com";
     expect(TESTNET_REST_URL).toContain("testnet");

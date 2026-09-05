@@ -1,8 +1,13 @@
 /**
  * Binance Futures Market Data Adapter — READ-ONLY
  *
- * Fetches market data from Binance Futures public endpoints.
+ * Fetches market data from Binance Futures TESTNET public endpoints.
  * No API key required for public market data.
+ *
+ * TESTNET ONLY: this adapter points to testnet.binancefuture.com — the same
+ * testnet environment used by BinanceTestnetClient. Mainnet (fapi.binance.com)
+ * is never contacted. Mainnet hostnames are additionally rejected by
+ * isMainnetUrl() in filters.ts.
  *
  * Endpoints used:
  * - GET /fapi/v1/ticker/24hr — 24h price statistics
@@ -16,7 +21,7 @@
 
 import { logger } from "../logger";
 
-const BASE_URL = "https://fapi.binance.com";
+const BASE_URL = "https://testnet.binancefuture.com";
 const REQUEST_TIMEOUT = 10000;
 
 export type BinanceTicker = {
