@@ -17,7 +17,10 @@ import {
   Minus,
 } from "lucide-react";
 import { PageHeader, Panel, Stat, Tag } from "@/components/space/Panel";
-import { buildTestnetCardData } from "@/lib/testnet-card-mapping";
+import {
+  buildTestnetCardData,
+  resolveTestnetDisplayState,
+} from "@/lib/testnet-card-mapping";
 import {
   fetchWalletStatus,
   fetchAuditTrail,
@@ -144,40 +147,67 @@ function CommandCenter() {
 
   // Phase 3.5-N: Testnet cards read the stateless, authenticated
   // testnet.diagnostics block (authoritative in production) instead of the
-  // possibly-empty in-memory unified snapshot. Safe unavailable fallbacks.
+  // possibly-empty in-memory snapshot. Safe unavailable fallbacks.
   // Phase 3.5-P: explicit per-source states — testnet loading/error only
   // affects the Testnet cards and never uses wallet/audit state as a gate.
-  const testnetCard = buildTestnetCardData(testnet);
-  const testnetStatusSub = testnetCard.openOrderCount !== null
-    ? `${testnetCard.openOrderCount} open order(s)`
-    : testnetError
-      ? "Binance data unavailable"
-      : "Checking Binance Testnet...";
-  const testnetBalanceValue = testnetCard.balanceAvailable && testnetCard.balance !== null
-    ? money(testnetCard.balance)
-    : testnetError
-      ? "Binance data unavailable"
-      : testnet
+  // Phase 3.5-S: pending/error/timeout resolve to explicit transient states —
+  // "NOT CONFIGURED" only comes from real diagnostics (credentials absent or
+  // authenticated === false). React Query keeps the last successful payload
+  // during a failed background refetch, so last-known-good LIVE data stays
+  // visible with a non-blocking banner instead of blanking.
+  const testnetDisplay = resolveTestnetDisplayState({
+    state: testnetLoading ? "pending" : testnetError ? "error" : "ok",
+    payload: testnet,
+  });
+  const testnetCard =
+    testnetDisplay.status === "pending" ? null : testnetDisplay.card;
+  const testnetPending = testnetDisplay.status === "pending";
+  const testnetTransientError =
+    testnetDisplay.status === "error" && !testnetDisplay.lastKnownGood;
+  const testnetRefreshing =
+    testnetDisplay.status === "error" && testnetDisplay.lastKnownGood;
+  const testnetStatusSub = testnetPending
+    ? "Checking Binance Testnet..."
+    : testnetRefreshing
+      ? "Refreshing..."
+      : testnetTransientError
+        ? "Binance data temporarily unavailable"
+        : testnetCard!.openOrderCount !== null
+          ? `${testnetCard!.openOrderCount} open order(s)`
+          : "Waiting for Binance data";
+  const testnetBalanceValue = testnetPending
+    ? "Checking Binance Testnet..."
+    : testnetCard!.balanceAvailable && testnetCard!.balance !== null
+      ? money(testnetCard!.balance!)
+      : testnetTransientError || testnetRefreshing
+        ? testnetRefreshing && testnetCard!.balanceAvailable && testnetCard!.balance !== null
+          ? money(testnetCard!.balance!)
+          : "Waiting for Binance data"
+        : "Waiting for Binance data";
+  const testnetPositionsSub = testnetPending
+    ? "Checking Binance Testnet..."
+    : testnetCard!.positionCount !== null
+      ? testnetCard!.position
+        ? `${testnetCard!.position.symbol} ${testnetCard!.position.side} qty ${testnetCard!.position.quantity}`
+        : `${testnetCard!.positionCount} open position(s)`
+      : testnetTransientError || testnetRefreshing
         ? "Waiting for Binance data"
         : "Checking Binance Testnet...";
-  const testnetPositionsSub = testnetCard.positionCount !== null
-    ? testnetCard.position
-      ? `${testnetCard.position.symbol} ${testnetCard.position.side} qty ${testnetCard.position.quantity}`
-      : `${testnetCard.positionCount} open position(s)`
-    : testnetError
-      ? "Binance data unavailable"
-      : "Checking Binance Testnet...";
-  const unrealizedPnlValue = testnetCard.unrealizedPnl !== null
-    ? money(testnetCard.unrealizedPnl)
-    : testnetError
-      ? "Binance data unavailable"
+  const unrealizedPnlValue = testnetPending
+    ? "Checking Binance Testnet..."
+    : testnetCard!.unrealizedPnl !== null
+      ? money(testnetCard!.unrealizedPnl)
       : "Waiting for Binance data";
   const unrealizedPnlTone =
-    testnetCard.unrealizedPnl === null
+    !testnetCard || testnetCard.unrealizedPnl === null
       ? "default"
       : testnetCard.unrealizedPnl < 0
         ? "loss"
         : "gain";
+  const renderTestnetCard = testnetCard ?? {
+    statusLabel: testnetPending ? "Checking..." : "UNAVAILABLE",
+    statusTone: "warn",
+  } as const;
 
   // Phase 3.5-P: per-source Wallet values — no fake $0.00 while loading/error.
   const walletBalanceValue = wallet
@@ -255,9 +285,9 @@ function CommandCenter() {
       <div className="mt-3 grid gap-3 lg:grid-cols-4">
         <Stat
           label="Testnet"
-          value={testnetCard.statusLabel}
+          value={renderTestnetCard.statusLabel}
           sub={testnetStatusSub}
-          tone={testnetCard.statusTone}
+          tone={renderTestnetCard.statusTone}
           icon={<CheckCircle2 className="h-4 w-4" />}
         />
         <Stat
@@ -269,7 +299,11 @@ function CommandCenter() {
         <Stat
           label="Unrealized PnL"
           value={unrealizedPnlValue}
-          sub={testnetCard.position ? `From ${testnetCard.position.symbol} position` : "From open positions"}
+          sub={
+            testnetCard?.position
+              ? `From ${testnetCard.position.symbol} position`
+              : "From open positions"
+          }
           tone={unrealizedPnlTone}
           icon={<TrendingUp className="h-4 w-4" />}
         />

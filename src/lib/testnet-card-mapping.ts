@@ -87,6 +87,62 @@ const UNAVAILABLE: TestnetCardData = {
 };
 
 /**
+ * Phase 3.5-S: the query lifecycle state for the testnet status request.
+ * The UI must never derive "NOT CONFIGURED" from these — pending, error
+ * and timeout are transient conditions, not authentication facts.
+ */
+export type TestnetQueryState = "pending" | "error" | "ok";
+
+export type TestnetDisplayState =
+  | { status: "pending"; card: null; banner: "Checking Binance Testnet..." }
+  | {
+      status: "error";
+      card: TestnetCardData | null;
+      banner: "Binance data temporarily unavailable";
+      /** previous successful card retained across a failed background refetch */
+      lastKnownGood: boolean;
+    }
+  | { status: "ok"; card: TestnetCardData; banner: null };
+
+/**
+ * Phase 3.5-S: resolve the Testnet card from the query lifecycle.
+ *
+ *   pending            → "Checking Binance Testnet..." (never NOT CONFIGURED)
+ *   error, no payload  → "Binance data temporarily unavailable" (never NOT CONFIGURED)
+ *   error, prev payload→ keep the previous successful card + non-blocking banner
+ *   ok                 → buildTestnetCardData(payload) — NOT CONFIGURED here means
+ *                        the diagnostics themselves say credentials absent or
+ *                        authenticated === false. Nothing else.
+ */
+export function resolveTestnetDisplayState(params: {
+  state: TestnetQueryState;
+  payload: TestnetPayloadLike | null | undefined;
+}): TestnetDisplayState {
+  if (params.state === "pending") {
+    return { status: "pending", card: null, banner: "Checking Binance Testnet..." };
+  }
+  if (params.state === "error") {
+    // React Query retains the last successful payload after a failed
+    // background refetch — keep showing it with a non-blocking banner.
+    if (params.payload) {
+      return {
+        status: "error",
+        card: buildTestnetCardData(params.payload),
+        banner: "Binance data temporarily unavailable",
+        lastKnownGood: true,
+      };
+    }
+    return {
+      status: "error",
+      card: null,
+      banner: "Binance data temporarily unavailable",
+      lastKnownGood: false,
+    };
+  }
+  return { status: "ok", card: buildTestnetCardData(params.payload), banner: null };
+}
+
+/**
  * Phase 3.5-Q: robust numeric coercion for live Binance position values.
  *
  * Binance Futures account payloads carry position/PnL values as STRINGS
