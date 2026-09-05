@@ -318,3 +318,4 @@ CREATE TABLE IF NOT EXISTS journal_events (
 
 CREATE INDEX IF NOT EXISTS idx_journal_events_timestamp ON journal_events(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_journal_events_type ON journal_events(event_type, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_events_symbol ON journal_events(symbol, timestamp DESC);

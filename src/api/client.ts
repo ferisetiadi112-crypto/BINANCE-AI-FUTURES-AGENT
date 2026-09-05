@@ -45,6 +45,7 @@ import {
   getAiLogbook,
   getSystemReadiness,
   getAgentStatus,
+  getAgentJournal,
 } from "../backend/api";
 import type { ApiResponse } from "../types/api";
 import {
@@ -284,6 +285,19 @@ export async function fetchSystemReadiness() {
 // ─── Agent Status (lightweight monitor) ──────────────────────────
 // Single aggregate for the main monitoring screen. In-memory only —
 // no database queries, no Binance REST calls.
+
+// ─── Agent Journal (persistent, DB-backed) ───────────────────────
+// Daily journal history + live work log, read from the persistent
+// agent_events/journal_events table — never from session or AI state.
+
+export async function fetchAgentJournal(date?: string) {
+  const result = await withTimeout(
+    "agent-journal",
+    getAgentJournal({ data: date ? { date } : {} }),
+    BUDGET_FAST_MS,
+  );
+  return result as ApiResponse<import("../backend/api").AgentJournalPayload>;
+}
 
 export async function fetchAgentStatus() {
   const result = await withTimeout("agent-status", getAgentStatus(), BUDGET_FAST_MS);

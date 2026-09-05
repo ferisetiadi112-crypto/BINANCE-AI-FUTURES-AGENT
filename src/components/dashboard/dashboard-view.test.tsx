@@ -33,9 +33,33 @@ function makeStatus(overrides: Partial<AgentStatusPayload> = {}): AgentStatusPay
   };
 }
 
-const render = (status: AgentStatusPayload | null, opts: { connecting?: boolean; error?: boolean } = {}) =>
+type JournalFixture = import("@/backend/api").AgentJournalPayload | null;
+
+const render = (
+  status: AgentStatusPayload | null,
+  _opts: { connecting?: boolean; error?: boolean } = {},
+  journalOverrides: Partial<NonNullable<JournalFixture>> = {},
+  renderOpts: { connecting?: boolean; journalError?: boolean } = {},
+) =>
   renderToStaticMarkup(
-    <DashboardView status={status} connecting={opts.connecting ?? false} error={opts.error ?? false} />,
+    <DashboardView
+      status={status}
+      connecting={renderOpts.connecting ?? _opts.connecting ?? false}
+      error={_opts.error ?? false}
+      journal={
+        "workLog" in journalOverrides || Object.keys(journalOverrides).length > 0
+          ? {
+              availableDates: [],
+              days: [],
+              workLog: [],
+              fetchedAt: new Date().toISOString(),
+              ...journalOverrides,
+            }
+          : null
+      }
+      journalConnecting={false}
+      journalError={renderOpts.journalError ?? false}
+    />,
   );
 
 describe("DashboardView — three-card structure", () => {
@@ -43,7 +67,7 @@ describe("DashboardView — three-card structure", () => {
     const html = render(makeStatus());
     expect(html).toContain("Status");
     expect(html).toContain("Journal");
-    expect(html).toContain("Reasoning");
+    expect(html).toContain("Live Work Log");
     expect(html).toContain("AI FUTURES AGENT");
     // Bloat sections are gone:
     expect(html).not.toContain("Current Reasoning");
@@ -122,19 +146,20 @@ describe("DashboardView — honest empty states, no fabrication", () => {
     expect(html).toContain("Connecting");
   });
 
-  it("JOURNAL shows waiting state when no completed work exists", () => {
+  it("JOURNAL shows waiting state only when no work exists anywhere (live fallback)", () => {
     const html = render(makeStatus({ journal: [] }));
     expect(html).toContain("Waiting for activity");
   });
 
-  it("REASONING shows 'Reasoning unavailable' when no live activity exists", () => {
+  it("LIVE WORK LOG shows honest empty state when the database has zero events", () => {
     const html = render(makeStatus({ recentActivity: [] }));
-    expect(html).toContain("Reasoning unavailable");
+    expect(html).toContain("No agent events recorded yet");
   });
 
-  it("REASONING shows agent-offline when runtime is down", () => {
+  it("LIVE WORK LOG falls back to PERSISTED meta when runtime is down", () => {
     const html = render(makeStatus({ status: "OFFLINE", recentActivity: [] }));
-    expect(html).toContain("Agent offline");
+    expect(html).toContain("AGENT OFFLINE");
+    expect(html).toContain("PERSISTED");
   });
 });
 
@@ -187,35 +212,109 @@ describe("DashboardView — JOURNAL renders real completed work", () => {
   });
 });
 
-describe("DashboardView — REASONING live stream", () => {
-  it("renders up to 5 real activity lines, newest last, excluding internal events", () => {
-    const activity = [
-      { timestamp: 1, eventType: "MARKET_SCAN", message: "Market scan: BTCUSDT (quality: GOOD)" },
-      { timestamp: 2, eventType: "RISK_CHECK", message: "Risk check: LONG BTCUSDT" },
-      { timestamp: 3, eventType: "TRADE_PROPOSED", message: "Trade proposed: LONG BTCUSDT" },
-      { timestamp: 4, eventType: "SYSTEM_STARTED", message: "Trading system started" },
-      { timestamp: 5, eventType: "TRADE_APPROVED", message: "Trade approved: LONG BTCUSDT" },
-      { timestamp: 6, eventType: "TRADE_OPENED", message: "Position opened: LONG BTCUSDT" },
-    ];
-    const html = render(makeStatus({ recentActivity: activity }));
-    expect(html).toContain("Trade proposed: LONG BTCUSDT");
-    expect(html).toContain("Trade approved: LONG BTCUSDT");
-    expect(html).toContain("Position opened: LONG BTCUSDT");
-    expect(html).not.toContain("Market scan: BTCUSDT");
-    expect(html).not.toContain("Risk check: LONG BTCUSDT");
+describe("DashboardView — LIVE WORK LOG (persistent, DB-backed)", () => {
+  it("renders categorized persisted work-log events with [CATEGORY] prefix, oldest last", () => {
+    const html = render(
+      makeStatus(),
+      {},
+      {
+        workLog: [
+          {
+            id: "w1",
+            timestamp: 1,
+            date: "2026-09-05",
+            time: "09:47:29",
+            eventType: "MARKET_SCAN",
+            category: "MARKET",
+            symbol: "BTCUSDT",
+            action: null,
+            message: "Market scan: BTCUSDT",
+            status: null,
+            pnl: null,
+            position: null,
+          },
+          {
+            id: "w2",
+            timestamp: 2,
+            date: "2026-09-05",
+            time: "09:47:31",
+            eventType: "RISK_CHECK",
+            category: "RISK",
+            symbol: "BTCUSDT",
+            action: null,
+            message: "Risk check: LONG BTCUSDT",
+            status: "APPROVED",
+            pnl: null,
+            position: null,
+          },
+        ],
+      },
+    );
+    expect(html).toContain("[MARKET]");
+    expect(html).toContain("[RISK]");
+    expect(html).toContain("Market scan: BTCUSDT");
+    expect(html).toContain("Risk check: LONG BTCUSDT");
   });
 
-  it("drops lines beyond the 5-line cap", () => {
-    const activity = Array.from({ length: 9 }, (_, i) => ({
-      timestamp: i + 1,
-      eventType: "TRADE_APPROVED",
-      message: `Event number ${i + 1}`,
-    }));
-    const html = render(makeStatus({ recentActivity: activity }));
-    expect(html).not.toContain("Event number 1");
-    expect(html).not.toContain("Event number 4");
-    expect(html).toContain("Event number 5");
-    expect(html).toContain("Event number 9");
+  it("shows stored work-log events even when the agent is offline (reconnection-safe)", () => {
+    const html = render(
+      makeStatus({ status: "OFFLINE" }),
+      {},
+      {
+        workLog: [
+          {
+            id: "w1",
+            timestamp: 1,
+            date: "2026-09-05",
+            time: "09:47:29",
+            eventType: "POSITION_OPENED",
+            category: "ACTION",
+            symbol: "TROUSDT",
+            action: null,
+            message: "Position opened: SHORT TROUSDT",
+            status: null,
+            pnl: null,
+            position: null,
+          },
+        ],
+      },
+    );
+    // Historical data must remain visible — never replaced by an offline state.
+    expect(html).toContain("Position opened: SHORT TROUSDT");
+    expect(html).not.toContain("Reasoning unavailable");
+  });
+
+  it("shows reconnecting status without clearing stored work-log data", () => {
+    const html = render(
+      makeStatus(),
+      {},
+      {
+        workLog: [
+          {
+            id: "w1",
+            timestamp: 1,
+            date: "2026-09-05",
+            time: "09:47:29",
+            eventType: "POSITION_OPENED",
+            category: "ACTION",
+            symbol: "TROUSDT",
+            action: null,
+            message: "Position opened: SHORT TROUSDT",
+            status: null,
+            pnl: null,
+            position: null,
+          },
+        ],
+      },
+      { journalError: true, connecting: true },
+    );
+    expect(html).toContain("Reconnecting");
+    expect(html).toContain("Position opened: SHORT TROUSDT");
+  });
+
+  it("shows empty state only when the database genuinely has zero events", () => {
+    const html = render(makeStatus());
+    expect(html).toContain("No agent events recorded yet");
   });
 });
 

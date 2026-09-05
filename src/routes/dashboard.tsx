@@ -1,9 +1,10 @@
 /** Dashboard Shell — Binance AI Futures Agent */
 
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useState } from "react";
 import { QueryClient } from "@tanstack/react-query";
 import { useAgentStatus } from "@/hooks/use-agent-status";
+import { useAgentJournal } from "@/hooks/use-agent-journal";
 import { DashboardView } from "@/components/dashboard/DashboardView";
 
 export const Route = createFileRoute("/dashboard")({
@@ -13,7 +14,7 @@ export const Route = createFileRoute("/dashboard")({
       {
         name: "description",
         content:
-          "Real-time AI futures agent dashboard: live status, current work, latest result, position, and today's PnL.",
+          "Real-time AI futures agent dashboard: live status, persistent journal, live work log, position, and today's PnL.",
       },
     ],
   }),
@@ -21,9 +22,23 @@ export const Route = createFileRoute("/dashboard")({
 });
 
 function Dashboard() {
-  const query = useAgentStatus(5_000);
+  const [selectedDate, setSelectedDate] = useState<string | undefined>(undefined);
+  const statusQuery = useAgentStatus(5_000);
+  const journalQuery = useAgentJournal(selectedDate, 5_000);
 
-  return <DashboardView status={query.data?.data ?? null} connecting={query.isPending} error={query.isError} />;
+  return (
+    <DashboardView
+      status={statusQuery.data?.data ?? null}
+      connecting={statusQuery.isPending}
+      error={statusQuery.isError}
+      journal={journalQuery.data?.data ?? null}
+      journalConnecting={journalQuery.isPending}
+      journalError={journalQuery.isError}
+      selectedDate={selectedDate ?? journalQuery.data?.data?.availableDates[0]?.date ?? null}
+      availableDates={journalQuery.data?.data?.availableDates ?? []}
+      onSelectDate={setSelectedDate}
+    />
+  );
 }
 
 export async function clientLoader({ queryClient }: { queryClient: QueryClient }) {

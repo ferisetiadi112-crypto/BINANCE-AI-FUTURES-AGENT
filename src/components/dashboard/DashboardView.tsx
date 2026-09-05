@@ -15,7 +15,7 @@
 
 import { useMemo } from "react";
 import { AlertTriangle } from "lucide-react";
-import type { AgentStatusPayload } from "@/backend/api";
+import type { AgentStatusPayload, AgentJournalPayload } from "@/backend/api";
 import { formatTime } from "./DashboardFormatters";
 
 const REASONING_LINES_MAX = 5;
@@ -34,6 +34,13 @@ type Props = {
   status: AgentStatusPayload | null;
   connecting: boolean;
   error: boolean;
+  /** Persistent, DB-backed journal payload (survives refresh/reconnect). */
+  journal?: AgentJournalPayload | null;
+  journalConnecting?: boolean;
+  journalError?: boolean;
+  selectedDate?: string | null;
+  availableDates?: Array<{ date: string; count: number }>;
+  onSelectDate?: (date: string) => void;
 };
 
 // ─── Small primitives ────────────────────────────────────────────────
@@ -182,6 +189,13 @@ function deriveReasoning(status: AgentStatusPayload | null): string[] {
     .map((a) => a.message.trim());
 }
 
+// ─── Persistent Journal / Work Log (DB-backed) ──────────────────────
+
+function todayLabel(date: string | null | undefined): string {
+  if (!date) return "";
+  return date === new Date().toISOString().slice(0, 10) ? `TODAY — ${date}` : date;
+}
+
 // ─── Card 1: STATUS ──────────────────────────────────────────────────
 
 function StatusCard({ status, connecting }: { status: AgentStatusPayload | null; connecting: boolean }) {
@@ -263,20 +277,86 @@ function StatusCard({ status, connecting }: { status: AgentStatusPayload | null;
 
 // ─── Card 2: JOURNAL ─────────────────────────────────────────────────
 
-function JournalCard({ status, connecting }: { status: AgentStatusPayload | null; connecting: boolean }) {
-  const entries = useMemo(() => (status ? deriveJournal(status) : []), [status]);
+function JournalCard({
+  journal,
+  journalConnecting,
+  journalError,
+  selectedDate,
+  availableDates,
+  onSelectDate,
+  status,
+}: {
+  journal: AgentJournalPayload | null;
+  journalConnecting: boolean;
+  journalError: boolean;
+  selectedDate: string | null;
+  availableDates: Array<{ date: string; count: number }>;
+  onSelectDate: (date: string) => void;
+  status: AgentStatusPayload | null;
+}) {
+  // Fallback: derive from live agent-status payload when the persistent
+  // journal has no events yet (genuinely empty database).
+  const liveEntries = useMemo(() => (status ? deriveJournal(status) : []), [status]);
+  const day = journal?.days.find((d) => d.date === selectedDate);
+  const hasPersistent = (day?.events.length ?? 0) > 0;
+
+  const dateLabel = todayLabel(selectedDate);
 
   return (
     <section className="rounded-sm border border-hairline bg-card/40 p-4 sm:p-5">
-      <CardHeader title="Journal" meta="COMPLETED WORK" />
+      <CardHeader title="Journal" meta={dateLabel ? dateLabel.toUpperCase() : "COMPLETED WORK"} />
+
+      {/* Date selector — previous days remain permanently accessible. */}
+      {availableDates.length > 1 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {availableDates.slice(0, 7).map((d) => (
+            <button
+              key={d.date}
+              onClick={() => onSelectDate(d.date)}
+              className={`rounded-sm border px-2 py-0.5 font-mono text-[0.62rem] tracking-wider transition-colors ${
+                d.date === selectedDate
+                  ? "border-primary/60 bg-primary/10 text-primary"
+                  : "border-hairline/60 text-muted-foreground/70 hover:text-foreground"
+              }`}
+            >
+              {d.date === new Date().toISOString().slice(0, 10) ? "TODAY" : d.date}
+              <span className="ml-1 text-muted-foreground/50">{d.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="mt-3 space-y-3">
-        {connecting && !status ? (
+        {journalConnecting && !journal ? (
           <Honest text="Connecting" />
-        ) : entries.length === 0 ? (
-          <Honest text="Waiting for activity" />
-        ) : (
-          entries.map((entry) => (
+        ) : hasPersistent ? (
+          day!.events.map((entry) => (
+            <div key={entry.id} className="border-b border-hairline/50 pb-3 last:border-b-0 last:pb-0">
+              <div className="flex items-baseline gap-2">
+                <span className="shrink-0 font-mono text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground/60">
+                  {entry.time}
+                </span>
+                <span className="min-w-0 break-words text-sm font-medium text-foreground/90">
+                  {entry.symbol ? `${entry.symbol} · ${entry.eventType.replace(/_/g, " ")}` : entry.eventType.replace(/_/g, " ")}
+                </span>
+              </div>
+              {entry.message.trim().length > 0 && (
+                <p className="mt-1.5 text-sm text-foreground/80">{entry.message}</p>
+              )}
+              {entry.pnl !== null && (
+                <div className="mt-1.5 text-sm">
+                  <span className="font-mono text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground/70">
+                    Result
+                  </span>
+                  <span className="ml-2">
+                    <Money value={entry.pnl} />
+                  </span>
+                </div>
+              )}
+            </div>
+          ))
+        ) : liveEntries.length > 0 ? (
+          liveEntries.map((entry) => (
             <div key={entry.key} className="border-b border-hairline/50 pb-3 last:border-b-0 last:pb-0">
               <div className="flex items-baseline gap-2">
                 <span className="shrink-0 font-mono text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground/60">
@@ -321,6 +401,12 @@ function JournalCard({ status, connecting }: { status: AgentStatusPayload | null
               </div>
             </div>
           ))
+        ) : journalError ? (
+          <Honest text="Journal data unavailable" />
+        ) : (
+          /* Empty state ONLY when the database genuinely has zero events
+             for the selected date — never as a reconnect placeholder. */
+          <Honest text="Waiting for activity" />
         )}
       </div>
     </section>
@@ -329,51 +415,77 @@ function JournalCard({ status, connecting }: { status: AgentStatusPayload | null
 
 // ─── Card 3: REASONING ───────────────────────────────────────────────
 
-function ReasoningCard({
+/**
+ * Work Log card — structured, observable agent work log built from REAL
+ * persisted agent events (never hidden chain-of-thought, never fabricated).
+ * Historical entries remain visible while disconnected; only a connection
+ * status line indicates the live stream state.
+ */
+function WorkLogCard({
+  journal,
+  journalConnecting,
+  journalError,
   status,
   connecting,
-  queryError,
 }: {
+  journal: AgentJournalPayload | null;
+  journalConnecting: boolean;
+  journalError: boolean;
   status: AgentStatusPayload | null;
   connecting: boolean;
-  queryError: boolean;
 }) {
-  const lines = useMemo(() => deriveReasoning(status), [status]);
   const online = status?.status === "RUNNING";
-
-  let body: React.ReactNode;
-  if (connecting && !status) {
-    body = <Honest text="Connecting" />;
-  } else if (queryError && !status) {
-    body = <Honest text="Data unavailable" />;
-  } else if (!online) {
-    body = <Honest text="Agent offline" />;
-  } else if (lines.length === 0) {
-    body = <Honest text="Reasoning unavailable" />;
-  } else {
-    body = (
-      <div className="flex flex-col gap-1 overflow-hidden">
-        {lines.map((line, i) => (
-          <span key={`${i}-${line}`} className="font-mono text-xs text-foreground/85">
-            <span className="mr-2 text-primary/70">&gt;</span>
-            {line}
-          </span>
-        ))}
-      </div>
-    );
-  }
+  const workLog = journal?.workLog ?? [];
+  const hasEvents = workLog.length > 0;
 
   return (
     <section className="rounded-sm border border-hairline bg-card/40 p-4 sm:p-5">
-      <CardHeader title="Reasoning" meta="LIVE" live={online && lines.length > 0} />
-      <div className="mt-3 max-h-[7.5rem] overflow-hidden">{body}</div>
+      <CardHeader title="Live Work Log" meta={online ? "LIVE" : "PERSISTED"} live={online && hasEvents} />
+
+      {/* Connection status — never replaces stored data. */}
+      {journalError && (
+        <div className="mt-2 flex items-center gap-2 font-mono text-[0.62rem] uppercase tracking-[0.2em] text-amber-signal">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-signal" />
+          {connecting || journalConnecting ? "Reconnecting" : "Disconnected — showing stored events"}
+        </div>
+      )}
+
+      <div className="mt-3 max-h-64 overflow-hidden">
+        {journalConnecting && !journal ? (
+          <Honest text="Connecting" />
+        ) : hasEvents ? (
+          <div className="flex flex-col gap-1">
+            {workLog.map((e) => (
+              <div key={e.id} className="font-mono text-xs text-foreground/85">
+                <span className="mr-2 text-primary/70">[{e.category}]</span>
+                <span className="mr-2 text-muted-foreground/50">{e.time}</span>
+                {e.message}
+              </div>
+            ))}
+          </div>
+        ) : journalError ? (
+          <Honest text="Work log data unavailable" />
+        ) : (
+          <Honest text="No agent events recorded yet" />
+        )}
+      </div>
     </section>
   );
 }
 
 // ─── Root ────────────────────────────────────────────────────────────
 
-export function DashboardView({ status, connecting, error }: Props) {
+export function DashboardView({
+  status,
+  connecting,
+  error,
+  journal = null,
+  journalConnecting = false,
+  journalError = false,
+  selectedDate = null,
+  availableDates = [],
+  onSelectDate = () => {},
+}: Props) {
   const showError = error && !status?.error;
   const bannerText = status?.error?.trim().length ? status.error : null;
 
@@ -400,8 +512,22 @@ export function DashboardView({ status, connecting, error }: Props) {
       {/* The three primary cards — STATUS first on mobile (stacked) */}
       <div className="grid grid-cols-1 gap-4">
         <StatusCard status={status} connecting={connecting} />
-        <JournalCard status={status} connecting={connecting} />
-        <ReasoningCard status={status} connecting={connecting} queryError={error} />
+        <JournalCard
+          status={status}
+          journal={journal}
+          journalConnecting={journalConnecting}
+          journalError={journalError}
+          selectedDate={selectedDate}
+          availableDates={availableDates}
+          onSelectDate={onSelectDate}
+        />
+        <WorkLogCard
+          status={status}
+          connecting={connecting}
+          journal={journal}
+          journalConnecting={journalConnecting}
+          journalError={journalError}
+        />
       </div>
     </div>
   );

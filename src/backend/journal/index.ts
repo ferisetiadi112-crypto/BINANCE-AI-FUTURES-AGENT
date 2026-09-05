@@ -19,6 +19,7 @@
  */
 
 import { logger } from "../logger";
+import { publishAgentEvent, subscribeToAgentEvents } from "./event-bus";
 import {
   appendJournalEvent,
   getRecentJournalEventsFromDB,
@@ -107,6 +108,14 @@ export type JournalEvent = {
 
 // ─── Journal State ───────────────────────────────────────────────────
 
+// Journal persistence listener — attached once so every published event is
+// written to the database, independent of any session/connection state.
+subscribeToAgentEvents((event) => {
+  appendJournalEvent(event).catch(() => {
+    // Error already logged inside appendJournalEvent
+  });
+});
+
 let _events: JournalEvent[] = [];
 let _eventCounter = 0;
 const MAX_JOURNAL_EVENTS = 1000;
@@ -139,10 +148,10 @@ export function recordJournalEvent(
     `[${record.eventType}] ${record.message}${record.symbol ? ` (${record.symbol})` : ""}`,
   );
 
-  // Persist to database (fire-and-forget, non-blocking)
-  appendJournalEvent(record).catch(() => {
-    // Error already logged inside appendJournalEvent
-  });
+  // Publish on the AgentEventBus — the persistence listener stores the event
+  // in the database (fire-and-forget, non-blocking) and other consumers
+  // (work-log stream) react to real system events only.
+  publishAgentEvent(record);
 
   return record;
 }
@@ -628,4 +637,4 @@ export function clearJournal(): void {
 
 // ─── Async Query Exports ───────────────────────────────────────────
 
-export { getJournalEventById, countJournalEvents } from "./repository";
+export { getJournalEventById, countJournalEvents, getJournalEventDates } from "./repository";

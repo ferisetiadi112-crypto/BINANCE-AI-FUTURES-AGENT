@@ -204,3 +204,34 @@ export async function getJournalEventsInRange(
     return [];
   }
 }
+
+/**
+ * Get journal events grouped by calendar date (UTC day of the event).
+ * Returns distinct dates newest-first, plus the total count per date.
+ * Used by the Dashboard to build the daily Journal without overwriting
+ * previous days — no destructive reset ever happens at midnight.
+ */
+export async function getJournalEventDates(
+  limit: number = 30
+): Promise<Array<{ date: string; count: number }>> {
+  try {
+    const rows = await dbQuery(
+      `SELECT date(timestamp / 1000, 'unixepoch') as event_date, COUNT(*) as count
+       FROM journal_events
+       GROUP BY event_date
+       ORDER BY event_date DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return rows.map((r) => ({
+      date: r["event_date"] as string,
+      count: parseInt(String(r["count"] ?? "0"), 10),
+    }));
+  } catch (err) {
+    logger.warn(
+      "journal-repository",
+      `Failed to read journal event dates: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return [];
+  }
+}

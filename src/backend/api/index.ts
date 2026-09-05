@@ -13,6 +13,8 @@ import { createServerFn } from "@tanstack/react-start";
 export { getDiagnostic } from "./diagnostic";
 export { getAgentStatus, AGENT_STATUS_QUERY_KEY } from "./agent-status";
 export type { AgentStatusPayload } from "./agent-status";
+export { getAgentJournal } from "./agent-journal";
+export type { AgentJournalPayload, AgentJournalEvent, AgentJournalDay } from "./agent-journal";
 import {
   fetchDashboard,
   fetchRuntime,
