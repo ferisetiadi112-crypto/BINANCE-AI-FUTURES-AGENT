@@ -1,0 +1,112 @@
+/**
+ * Phase 3.5-N — Command Center testnet card mapping tests.
+ *
+ * Verifies the diagnostics-first mapping with safe fallbacks:
+ *   A. authenticated diagnostics → LIVE + balance + position
+ *   B. diagnostics unavailable → safe unavailable state, no fake $0.00
+ *   C. authenticated=false → NOT CONFIGURED
+ */
+import { describe, expect, it } from "vitest";
+import { buildTestnetCardData } from "./testnet-card-mapping";
+
+const liveDiagnostics = {
+  environment: { apiKeyConfigured: true, secretConfigured: true },
+  binance: { mode: "TESTNET", authenticated: true },
+  account: { balanceReadable: true, balance: 5000 },
+  position: {
+    readable: true,
+    hasPosition: true,
+    symbol: "SNTUSDT",
+    side: "SHORT",
+    quantity: 7,
+    entryPrice: 0.5,
+    unrealizedPnl: -1.23,
+  },
+  orders: { readable: true, openOrderCount: 0 },
+};
+
+describe("buildTestnetCardData", () => {
+  it("CASE A: authenticated diagnostics → LIVE, balance 5000, SNTUSDT SHORT 7", () => {
+    const card = buildTestnetCardData({ diagnostics: liveDiagnostics });
+
+    expect(card.statusLabel).toBe("LIVE");
+    expect(card.statusTone).toBe("gain");
+    expect(card.balance).toBe(5000);
+    expect(card.balanceAvailable).toBe(true);
+    expect(card.positionCount).toBe(1);
+    expect(card.position).toEqual({
+      symbol: "SNTUSDT",
+      side: "SHORT",
+      quantity: 7,
+      unrealizedPnl: -1.23,
+    });
+    expect(card.unrealizedPnl).toBe(-1.23);
+    expect(card.openOrderCount).toBe(0);
+  });
+
+  it("CASE B: diagnostics unavailable + empty snapshot → safe unavailable, no fake $0.00", () => {
+    // Serverless cold start: snapshot empty, no diagnostics.
+    const card = buildTestnetCardData({
+      configured: false,
+      connected: false,
+      balance: 0,
+      positions: [],
+    });
+
+    expect(card.statusLabel).toBe("NOT CONFIGURED");
+    expect(card.balanceAvailable).toBe(false);
+    expect(card.balance).toBeNull(); // never presents $0.00 as live Binance data
+    expect(card.positionCount).toBeNull();
+    expect(card.unrealizedPnl).toBeNull();
+  });
+
+  it("CASE B2: fully undefined payload → safe unavailable", () => {
+    const card = buildTestnetCardData(null);
+    expect(card.statusLabel).toBe("NOT CONFIGURED");
+    expect(card.balance).toBeNull();
+    expect(card.balanceAvailable).toBe(false);
+  });
+
+  it("CASE C: authenticated=false → NOT CONFIGURED, no trading capability implied", () => {
+    const card = buildTestnetCardData({
+      diagnostics: {
+        ...liveDiagnostics,
+        binance: { mode: "TESTNET", authenticated: false },
+      },
+    });
+
+    expect(card.statusLabel).toBe("NOT CONFIGURED");
+    expect(card.statusTone).toBe("warn");
+    expect(card.balanceAvailable).toBe(false);
+    expect(card.balance).toBeNull();
+    expect(card.position).toBeNull();
+    expect(card.unrealizedPnl).toBeNull();
+  });
+
+  it("CASE D: credentials present but not yet authenticated → CONFIGURED (warn), no balance", () => {
+    const card = buildTestnetCardData({
+      diagnostics: {
+        ...liveDiagnostics,
+        binance: { mode: "TESTNET", authenticated: null },
+      },
+    });
+
+    expect(card.statusLabel).toBe("CONFIGURED");
+    expect(card.balance).toBeNull();
+    expect(card.balanceAvailable).toBe(false);
+  });
+
+  it("falls back to a genuinely connected snapshot when diagnostics is absent", () => {
+    const card = buildTestnetCardData({
+      configured: true,
+      connected: true,
+      balance: 4200,
+      positions: [{ unrealizedPnl: 12.5 }],
+    });
+
+    expect(card.statusLabel).toBe("LIVE");
+    expect(card.balance).toBe(4200);
+    expect(card.positionCount).toBe(1);
+    expect(card.unrealizedPnl).toBe(12.5);
+  });
+});

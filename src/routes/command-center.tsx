@@ -17,6 +17,7 @@ import {
   Minus,
 } from "lucide-react";
 import { PageHeader, Panel, Stat, Tag } from "@/components/space/Panel";
+import { buildTestnetCardData } from "@/lib/testnet-card-mapping";
 import {
   fetchWalletStatus,
   fetchAuditTrail,
@@ -123,6 +124,35 @@ function CommandCenter() {
   const auditEvents = auditResponse?.data?.events || [];
   const testnet = testnetResponse?.data;
 
+  // Phase 3.5-N: Testnet cards read the stateless, authenticated
+  // testnet.diagnostics block (authoritative in production) instead of the
+  // possibly-empty in-memory unified snapshot. Safe unavailable fallbacks.
+  const testnetCard = buildTestnetCardData(testnet);
+  const testnetStatusSub = testnetCard.openOrderCount !== null
+    ? `${testnetCard.openOrderCount} open order(s)`
+    : testnet?.paperTrading === false
+      ? "Live testnet connection"
+      : "Checking Binance Testnet...";
+  const testnetBalanceValue = testnetCard.balanceAvailable && testnetCard.balance !== null
+    ? money(testnetCard.balance)
+    : testnet
+      ? "Waiting for Binance data"
+      : "Unavailable";
+  const testnetPositionsSub = testnetCard.positionCount !== null
+    ? testnetCard.position
+      ? `${testnetCard.position.symbol} ${testnetCard.position.side} qty ${testnetCard.position.quantity}`
+      : `${testnetCard.positionCount} open position(s)`
+    : "Waiting for Binance data";
+  const unrealizedPnlValue = testnetCard.unrealizedPnl !== null
+    ? money(testnetCard.unrealizedPnl)
+    : "Waiting for Binance data";
+  const unrealizedPnlTone =
+    testnetCard.unrealizedPnl === null
+      ? "default"
+      : testnetCard.unrealizedPnl < 0
+        ? "loss"
+        : "gain";
+
   const [topUpAmount, setTopUpAmount] = useState("");
   const [topUpNote, setTopUpNote] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
@@ -208,22 +238,22 @@ function CommandCenter() {
       <div className="mt-3 grid gap-3 lg:grid-cols-4">
         <Stat
           label="Testnet"
-          value={testnet?.configured ? (testnet?.connected ? "LIVE" : "OFFLINE") : "NOT CONFIGURED"}
-          sub={testnet?.paperTrading ? "Paper mode — no real orders" : "Live testnet orders active"}
-          tone={testnet?.connected ? "gain" : "warn"}
+          value={testnetCard.statusLabel}
+          sub={testnetStatusSub}
+          tone={testnetCard.statusTone}
           icon={<CheckCircle2 className="h-4 w-4" />}
         />
         <Stat
           label="Testnet Balance"
-          value={testnet?.balance ? money(testnet.balance) : "$0.00"}
-          sub={`${testnet?.positions?.length ?? 0} open position(s)`}
+          value={testnetBalanceValue}
+          sub={testnetPositionsSub}
           icon={<Wallet className="h-4 w-4" />}
         />
         <Stat
           label="Unrealized PnL"
-          value={testnet?.positions?.length ? money(testnet.positions.reduce((a: number, p: any) => a + p.unrealizedPnl, 0)) : "$0.00"}
-          sub="From open positions"
-          tone={testnet?.positions?.some((p: any) => p.unrealizedPnl < 0) ? "loss" : "gain"}
+          value={unrealizedPnlValue}
+          sub={testnetCard.position ? `From ${testnetCard.position.symbol} position` : "From open positions"}
+          tone={unrealizedPnlTone}
           icon={<TrendingUp className="h-4 w-4" />}
         />
         <Stat
