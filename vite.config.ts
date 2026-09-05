@@ -17,6 +17,6 @@ export default defineConfig({
     // The default cloudflare-module preset produces a worker with no static
     // index.html, which 404s on static-only hosting. node-server emits a
     // runnable Node runtime that serves both / and /api/*.
-    preset: "node-server",
+    preset: process.env["VERCEL"] ? "vercel" : "node-server",
   },
 });

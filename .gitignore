@@ -44,3 +44,6 @@ tsconfig.tsbuildinfo
 
 # Freebuff runtime workspace
 isolate/
+
+# Vercel build output
+.vercel/
