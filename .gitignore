@@ -41,3 +41,6 @@ data/
 -e 
 # Build artifacts
 tsconfig.tsbuildinfo
+
+# Freebuff runtime workspace
+isolate/
