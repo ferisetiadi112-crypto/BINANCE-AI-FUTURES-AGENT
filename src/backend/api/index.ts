@@ -11,6 +11,8 @@
 
 import { createServerFn } from "@tanstack/react-start";
 export { getDiagnostic } from "./diagnostic";
+export { getLLMProbe } from "./llm-probe";
+export type { LLMDiagnosticResponse } from "./llm-probe";
 export { getAgentStatus, AGENT_STATUS_QUERY_KEY } from "./agent-status";
 export type { AgentStatusPayload } from "./agent-status";
 export { getAgentJournal } from "./agent-journal";

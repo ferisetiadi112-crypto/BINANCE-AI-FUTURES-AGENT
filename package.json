@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "seed": "node --import tsx src/backend/database/seed.ts",
-    "seed:reset": "rm -f data/agent.db && node --import tsx src/backend/database/seed.ts"
+    "seed:reset": "rm -f data/agent.db && node --import tsx src/backend/database/seed.ts",
+    "runtime:windows": "node --import tsx src/backend/runtime/windows/index.ts"
   },
   "overrides": {
     "rolldown": "1.2.1"

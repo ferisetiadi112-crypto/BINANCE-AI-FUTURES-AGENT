@@ -297,7 +297,12 @@ export function mergeLLMDecisionIntoAiDecision(
     evidence,
 
     decisionVersion: DECISION_VERSION,
-    modelVersion: `llm-${routerResult.provider}`,
+    // Phase 3.8-B: honest provenance. A safe_fallback (all providers failed)
+    // is NOT an LLM decision and must never be labeled `llm-*`.
+    modelVersion:
+      routerResult.provider === "safe_fallback"
+        ? "safe_fallback"
+        : `llm-${routerResult.provider}`,
   };
 
   logger.info(

@@ -1,8 +1,8 @@
 /**
  * AI Router — BINANCE AI FUTURES AGENT v0.1
  *
- * Implements sequential fallback routing across 3 AI providers:
- *   1. Gemini (PRIMARY) → 2. Groq (fallback) → 3. OpenRouter (fallback)
+ * Implements sequential fallback routing across all configured AI providers:
+ *   1. Gemini (PRIMARY) → 2. Groq → 3. OpenRouter → 4. Cerebras → 5. Mistral
  *
  * Safety guarantees:
  * - If a provider throws (error, rate limit, invalid output), the next provider is tried.

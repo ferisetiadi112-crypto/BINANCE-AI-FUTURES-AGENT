@@ -553,6 +553,7 @@ export class TradingOrchestrator {
           decision.confidence,
           decision.strategy,
           decision.id,
+          decision.modelVersion,
         );
       }
     }
@@ -937,6 +938,7 @@ export class TradingOrchestrator {
           decision.confidence,
           decision.strategy,
           decision.id,
+          decision.modelVersion,
         );
       }
     }

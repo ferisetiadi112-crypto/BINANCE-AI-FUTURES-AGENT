@@ -210,14 +210,22 @@ export function recordTradeProposed(
   confidence: number,
   strategy: string,
   decisionId: string,
+  /** Phase 3.8-B: honest reasoning provenance, e.g. "llm-openai" or "safe-fallback". */
+  modelVersion?: string,
 ): JournalEvent {
+  const origin =
+    modelVersion === undefined
+      ? ""
+      : modelVersion === "safe_fallback"
+        ? " — safe fallback (no LLM response)"
+        : ` — LLM provider: ${modelVersion.replace(/^llm-/, "")}`;
   return recordJournalEvent({
     eventType: "TRADE_PROPOSED",
     importance: "MEDIUM",
     symbol,
-    message: `Trade proposed: ${direction} ${symbol} (${(confidence * 100).toFixed(1)}% confidence, ${strategy})`,
+    message: `Trade proposed: ${direction} ${symbol} (${(confidence * 100).toFixed(1)}% confidence, ${strategy})${origin}`,
     decisionId,
-    reasoning: `AI decision: ${direction} via ${strategy}`,
+    reasoning: `AI decision: ${direction} via ${strategy}${origin}`,
   });
 }
 
