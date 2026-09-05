@@ -38,11 +38,23 @@ import * as symbolUniverseModule from "../market/symbols";
 import { getFeedManager, type PerSymbolFeedState, type FeedAggregateState, type MarketSnapshot } from "../market/symbol-feed-state";
 import { generateMarketState, updateSnapshot as updateRuntimeSnapshot, getMarketState } from "../runtime/engine";
 
-export type DataSource = "mock" | "database" | "live";
+export type DataSource = "mock" | "database" | "live" | "binance-testnet";
 
 let currentSource: DataSource = "mock";
 
 export async function getDataSource(): Promise<DataSource> {
+  // Phase 3.5-L: when the unified Binance Futures TESTNET snapshot is
+  // connected, the data genuinely comes from the live testnet — never label
+  // it "mock" (the old default label leaked into live production responses).
+  try {
+    const { getExchangeSnapshot } = await import("../exchange/unified-state");
+    if (getExchangeSnapshot().connected) {
+      currentSource = "binance-testnet";
+      return currentSource;
+    }
+  } catch {
+    // unified state unavailable (e.g. unit tests) — fall through to DB check
+  }
   try {
     const account = await accountRepository.getMain();
     if (account) {

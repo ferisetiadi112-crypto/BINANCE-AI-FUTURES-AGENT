@@ -318,7 +318,7 @@ export type SystemConfig = {
 export type ApiResponse<T> = {
   data: T;
   timestamp: string;
-  source: "mock" | "database" | "live";
+  source: "mock" | "database" | "live" | "binance-testnet";
 };
 
 // ─── Market Feed Status (Phase 8B) ──────────────────────────────────

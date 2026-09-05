@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { getDataSource } from "./data-adapter";
 import * as mock from "./mock-data";
 
@@ -7,6 +7,37 @@ describe("Data Adapter", () => {
     // Without a database, the adapter should return mock data
     const source = await getDataSource();
     expect(source).toBe("mock");
+  });
+
+  describe("Phase 3.5-L — Source Label Correctness", () => {
+    it("never labels a connected Binance Futures TESTNET snapshot as mock", async () => {
+      // Simulate a connected unified testnet snapshot (the exact shape
+      // getDataSource() inspects) and verify the label reflects the real
+      // source instead of the legacy "mock" default.
+      vi.resetModules();
+      vi.doMock("../exchange/unified-state", () => ({
+        getExchangeSnapshot: () => ({ connected: true, configured: true }),
+      }));
+      const { getDataSource: getSourceWithLiveTestnet } = await import("./data-adapter");
+      const source = await getSourceWithLiveTestnet();
+      expect(source).toBe("binance-testnet");
+      expect(source).not.toBe("mock");
+      vi.doUnmock("../exchange/unified-state");
+      vi.resetModules();
+    });
+
+    it("keeps mock label when the testnet snapshot is NOT connected", async () => {
+      vi.resetModules();
+      vi.doMock("../exchange/unified-state", () => ({
+        getExchangeSnapshot: () => ({ connected: false, configured: false }),
+      }));
+      const { getDataSource: getSourceOffline } = await import("./data-adapter");
+      const source = await getSourceOffline();
+      // No DB in unit test environment → legacy mock fallback is correct here
+      expect(source).toBe("mock");
+      vi.doUnmock("../exchange/unified-state");
+      vi.resetModules();
+    });
   });
 
   describe("Mock Data Functions", () => {
