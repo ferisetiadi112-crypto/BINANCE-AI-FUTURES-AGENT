@@ -24,6 +24,61 @@ const here = dirname(fileURLToPath(import.meta.url));
 let pgSql: any = null;
 let pgConnected = false;
 
+/**
+ * Phase 3.8-B.4-FIX — Safe error categorization for Postgres connect failures.
+ * Returns a category only; NEVER includes connection-string contents.
+ */
+export type DbConnectErrorCategory =
+  | "DNS"
+  | "TCP_CONNECT_TIMEOUT"
+  | "TLS"
+  | "AUTH"
+  | "CONNECTION_REFUSED"
+  | "CONNECTION_LIMIT"
+  | "POOLER"
+  | "MALFORMED_URL"
+  | "UNKNOWN";
+
+/** Strip anything that could carry credentials from an error string. */
+function sanitizeErrorText(text: string): string {
+  return text
+    .replace(/postgres(?:ql)?:\/\/[^\s"']+/gi, "<redacted-connection-string>")
+    .replace(/password=[^\s&"]*/gi, "password=<redacted>");
+}
+
+export function categorizeDbConnectError(err: unknown): DbConnectErrorCategory {
+  const code = (err as { code?: string })?.code ?? "";
+  const message = String((err as Error)?.message ?? err);
+  const text = `${code} ${message}`.toUpperCase();
+
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN") return "DNS";
+  if (code === "ECONNREFUSED") return "CONNECTION_REFUSED";
+  if (text.includes("CONNECT_TIMEOUT") || code === "ETIMEDOUT" || text.includes("ETIMEDOUT"))
+    return "TCP_CONNECT_TIMEOUT";
+  if (code === "ECONNRESET" || text.includes("SOCKET HANG UP")) return "POOLER";
+  if (
+    code.startsWith("ERR_TLS") ||
+    code === "EPROTO" ||
+    text.includes("SSL") ||
+    text.includes("TLS")
+  )
+    return "TLS";
+  if (code === "28P01" || code === "28000" || text.includes("PASSWORD AUTHENTICATION"))
+    return "AUTH";
+  if (code === "53300" || text.includes("TOO MANY CONNECTIONS")) return "CONNECTION_LIMIT";
+  if (code === "08006" || code === "57P01") return "POOLER";
+  if (text.includes("MALFORMED") || text.includes("INVALID CONNECTION STRING") || text.includes("COULD NOT PARSE"))
+    return "MALFORMED_URL";
+  return "UNKNOWN";
+}
+
+const PG_CONNECT_MAX_ATTEMPTS = 3;
+const PG_CONNECT_BACKOFF_BASE_MS = 500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function getPostgresConnection(): Promise<any> {
   if (pgSql) return pgSql;
 
@@ -38,13 +93,49 @@ async function getPostgresConnection(): Promise<any> {
     idle_timeout: 20,
     connect_timeout: 10,
     ssl: { rejectUnauthorized: false },
+    // Neon pooler (PgBouncer transaction mode) is not reliably compatible
+    // with named prepared statements — use unnamed statements.
+    prepare: false,
   });
 
-  // Test connection
-  await pgSql`SELECT 1`;
-  pgConnected = true;
-  logger.info("database", "PostgreSQL connected via Neon");
-  return pgSql;
+  // Bounded retry with linear backoff on the initial SELECT 1 health check.
+  // Transient cold-start/pooler hiccups (e.g. write CONNECT_TIMEOUT) are
+  // retried; a persistent failure still throws (fail-closed).
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= PG_CONNECT_MAX_ATTEMPTS; attempt++) {
+    try {
+      await pgSql`SELECT 1`;
+      pgConnected = true;
+      logger.info("database", "PostgreSQL connected via Neon");
+      return pgSql;
+    } catch (err) {
+      lastError = err;
+      pgConnected = false;
+      const category = categorizeDbConnectError(err);
+      const safeMessage = sanitizeErrorText(String((err as Error)?.message ?? err));
+      logger.error(
+        "database",
+        `PostgreSQL SELECT 1 failed (attempt ${attempt}/${PG_CONNECT_MAX_ATTEMPTS}, category=${category}, DATABASE_URL=SET): ${safeMessage}`,
+      );
+      if (attempt < PG_CONNECT_MAX_ATTEMPTS) {
+        await sleep(PG_CONNECT_BACKOFF_BASE_MS * attempt);
+      }
+    }
+  }
+
+  // Fail-closed: tear down the broken client so a later call can rebuild it.
+  try {
+    await pgSql.end({ timeout: 5 });
+  } catch {
+    /* ignore teardown errors */
+  }
+  pgSql = null;
+
+  const category = categorizeDbConnectError(lastError);
+  const safeMessage = sanitizeErrorText(String((lastError as Error)?.message ?? lastError));
+  throw new Error(
+    `PostgreSQL connection failed after ${PG_CONNECT_MAX_ATTEMPTS} attempts (category=${category}): ${safeMessage}`,
+  );
 }
 
 // ─── SQLite Connection (Lazy Singleton) ─────────────────────────────
