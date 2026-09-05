@@ -52,6 +52,7 @@ const render = (
               availableDates: [],
               days: [],
               workLog: [],
+              decisionTrace: [],
               fetchedAt: new Date().toISOString(),
               ...journalOverrides,
             }
@@ -67,7 +68,7 @@ describe("DashboardView — three-card structure", () => {
     const html = render(makeStatus());
     expect(html).toContain("Status");
     expect(html).toContain("Journal");
-    expect(html).toContain("Live Work Log");
+    expect(html).toContain("Live Work Process");
     expect(html).toContain("AI FUTURES AGENT");
     // Bloat sections are gone:
     expect(html).not.toContain("Current Reasoning");
@@ -151,15 +152,15 @@ describe("DashboardView — honest empty states, no fabrication", () => {
     expect(html).toContain("Waiting for activity");
   });
 
-  it("LIVE WORK LOG shows honest empty state when the database has zero events", () => {
+  it("LIVE WORK PROCESS shows honest empty state when the database has zero events", () => {
     const html = render(makeStatus({ recentActivity: [] }));
-    expect(html).toContain("No agent events recorded yet");
+    expect(html).toContain("No observable agent activity yet.");
   });
 
-  it("LIVE WORK LOG falls back to PERSISTED meta when runtime is down", () => {
+  it("LIVE WORK PROCESS falls back to IDLE status when runtime is down", () => {
     const html = render(makeStatus({ status: "OFFLINE", recentActivity: [] }));
     expect(html).toContain("AGENT OFFLINE");
-    expect(html).toContain("PERSISTED");
+    expect(html).toContain("IDLE");
   });
 });
 
@@ -284,7 +285,7 @@ describe("DashboardView — LIVE WORK LOG (persistent, DB-backed)", () => {
     expect(html).not.toContain("Reasoning unavailable");
   });
 
-  it("shows reconnecting status without clearing stored work-log data", () => {
+  it("shows reconnecting status without clearing stored work-process data", () => {
     const html = render(
       makeStatus(),
       {},
@@ -308,13 +309,13 @@ describe("DashboardView — LIVE WORK LOG (persistent, DB-backed)", () => {
       },
       { journalError: true, connecting: true },
     );
-    expect(html).toContain("Reconnecting");
+    expect(html).toContain("RECONNECTING");
     expect(html).toContain("Position opened: SHORT TROUSDT");
   });
 
   it("shows empty state only when the database genuinely has zero events", () => {
     const html = render(makeStatus());
-    expect(html).toContain("No agent events recorded yet");
+    expect(html).toContain("No observable agent activity yet.");
   });
 });
 

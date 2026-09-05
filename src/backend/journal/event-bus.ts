@@ -29,17 +29,32 @@ export type WorkLogCategory =
   | "SYSTEM"
   | "ERROR";
 
-/** Map real journal event types to high-level work categories. */
+/**
+ * Map real journal event types to high-level work categories.
+ *
+ * These map the ACTUAL decision pipeline of the orchestrator:
+ *   MARKET_SCAN        -> MARKET    (real market data received/scan)
+ *   TRADE_PROPOSED     -> SIGNAL    (real signal: direction + confidence)
+ *   TRADE_APPROVED     -> DECISION  (real decision: proceed to execution)
+ *   TRADE_REJECTED     -> DECISION  (real decision: do not trade)
+ *   RISK_CHECK / RISK_*  -> RISK      (real risk gate checks)
+ *   ORDER_* and POSITION_* -> ACTION  (real execution events)
+ *   MONITOR / PNL / REPORT -> MONITOR (real monitoring events)
+ * Only events that really occur in the backend are mapped; nothing is
+ * synthesized to fill a category.
+ */
 export function categorizeEvent(eventType: string): WorkLogCategory {
   switch (eventType) {
     case "MARKET_SCAN":
       return "MARKET";
     case "RESEARCH":
     case "ANALYSIS":
-    case "TRADE_PROPOSED":
       return "ANALYSIS";
-    case "TRADE_APPROVED":
+    case "TRADE_PROPOSED":
       return "SIGNAL";
+    case "TRADE_APPROVED":
+    case "TRADE_REJECTED":
+      return "DECISION";
     case "RISK_CHECK":
     case "RISK_LOCKED":
     case "COOLDOWN_STARTED":
@@ -47,8 +62,6 @@ export function categorizeEvent(eventType: string): WorkLogCategory {
     case "PROFIT_TARGET_REACHED":
     case "HARD_PROFIT_CAP":
       return "RISK";
-    case "TRADE_REJECTED":
-      return "DECISION";
     case "TRADE_OPENED":
     case "POSITION_OPENED":
     case "ORDER_SUBMITTED":

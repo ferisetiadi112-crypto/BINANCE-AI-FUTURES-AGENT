@@ -57,6 +57,12 @@ export type AgentJournalPayload = {
   days: AgentJournalDay[];
   /** Latest persisted work-log entries (categorized, newest last). */
   workLog: AgentJournalEvent[];
+  /**
+   * Decision trace: the observable event sequence of the most recent
+   * decision cycle (MARKET → SIGNAL → RISK → DECISION → ACTION/MONITOR).
+   * Built ONLY from real persisted events — never hidden chain-of-thought.
+   */
+  decisionTrace: AgentJournalEvent[];
   /** Server-generated timestamp for freshness display. */
   fetchedAt: string;
 };
@@ -113,7 +119,27 @@ export const JOURNAL_OUTCOME_EVENTS: ReadonlySet<string> = new Set([
 ]);
 
 const WORK_LOG_LIMIT = 40;
+const DECISION_TRACE_WINDOW_MS = 10 * 60_000;
 const MAX_EVENTS_PER_DAY = 300;
+
+/**
+ * Build the decision trace: take the last real outcome/decision event, then
+ * collect all persisted events within the cycle window before it — the
+ * observable chain that led to it. Pure function; exported for tests.
+ */
+export function buildDecisionTrace(
+  recent: ReturnType<typeof getRecentJournalEventsFromDB> extends Promise<infer T> ? T : never,
+): ReturnType<typeof getRecentJournalEventsFromDB> extends Promise<infer T> ? T : never {
+  if (recent.length === 0) return [];
+  const newestFirst = [...recent].sort((a, b) => b.timestamp - a.timestamp);
+  const anchor = newestFirst.find((e) =>
+    ["TRADE_PROPOSED", "TRADE_APPROVED", "TRADE_REJECTED", "TRADE_OPENED", "POSITION_OPENED", "TRADE_CLOSED", "POSITION_CLOSED", "RISK_LOCKED"].includes(e.eventType),
+  );
+  if (!anchor) return [];
+  return newestFirst
+    .filter((e) => e.timestamp >= anchor.timestamp - DECISION_TRACE_WINDOW_MS && e.timestamp <= anchor.timestamp)
+    .sort((a, b) => a.timestamp - b.timestamp);
+}
 
 /**
  * Pure helper: group events by their calendar date.
@@ -180,6 +206,7 @@ export const getAgentJournal = createServerFn({ method: "GET" })
         availableDates: dates,
         days,
         workLog,
+        decisionTrace: buildDecisionTrace(recent).map(toAgentJournalEvent),
         fetchedAt: new Date().toISOString(),
       },
       timestamp: new Date().toISOString(),

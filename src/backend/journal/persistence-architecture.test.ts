@@ -22,7 +22,7 @@ import {
   countJournalEvents,
 } from "./repository";
 import { categorizeEvent, publishAgentEvent, subscribeToAgentEvents, clearAgentEventBus } from "./event-bus";
-import { eventDate, eventTime, groupEventsByDate } from "../api/agent-journal";
+import { eventDate, eventTime, groupEventsByDate, buildDecisionTrace } from "../api/agent-journal";
 import type { JournalEvent } from "./index";
 
 let counter = 0;
@@ -174,12 +174,14 @@ describe("event bus — real event flow", () => {
 describe("work log categorization — real events only", () => {
   it("maps real event types to observable work categories", () => {
     expect(categorizeEvent("MARKET_SCAN")).toBe("MARKET");
-    expect(categorizeEvent("TRADE_PROPOSED")).toBe("ANALYSIS");
-    expect(categorizeEvent("TRADE_APPROVED")).toBe("SIGNAL");
+    expect(categorizeEvent("TRADE_PROPOSED")).toBe("SIGNAL");
     expect(categorizeEvent("RISK_CHECK")).toBe("RISK");
+    expect(categorizeEvent("TRADE_APPROVED")).toBe("DECISION");
     expect(categorizeEvent("TRADE_REJECTED")).toBe("DECISION");
     expect(categorizeEvent("POSITION_OPENED")).toBe("ACTION");
+    expect(categorizeEvent("ORDER_SUBMITTED")).toBe("ACTION");
     expect(categorizeEvent("POSITION_MONITOR")).toBe("MONITOR");
+    expect(categorizeEvent("PNL_UPDATED")).toBe("MONITOR");
     expect(categorizeEvent("SYSTEM_STARTED")).toBe("SYSTEM");
     expect(categorizeEvent("RISK_LOCKED")).toBe("RISK");
   });
@@ -190,6 +192,36 @@ describe("date helpers — daily journal grouping", () => {
     const ts = Date.parse("2026-09-05T09:47:29.000Z");
     expect(eventDate(ts)).toBe("2026-09-05");
     expect(eventTime(ts)).toBe("09:47:29");
+  });
+
+  it("builds a decision trace from the real event chain of the last decision", () => {
+    const now = Date.now();
+    const recent = [
+      makeEvent({ id: "T-MARKET", timestamp: now - 50_000, eventType: "MARKET_SCAN" }),
+      makeEvent({ id: "T-SIGNAL", timestamp: now - 40_000, eventType: "TRADE_PROPOSED" }),
+      makeEvent({ id: "T-RISK", timestamp: now - 30_000, eventType: "RISK_CHECK" }),
+      makeEvent({ id: "T-DECISION", timestamp: now - 20_000, eventType: "TRADE_REJECTED" }),
+      makeEvent({ id: "T-MONITOR", timestamp: now - 10_000, eventType: "POSITION_MONITOR" }),
+    ];
+    const trace = buildDecisionTrace(recent);
+    // Chain from the last decision event (TRADE_REJECTED) backwards within window.
+    const ids = trace.map((e) => e.id);
+    expect(ids).toContain("T-SIGNAL");
+    expect(ids).toContain("T-RISK");
+    expect(ids).toContain("T-DECISION");
+    // Trace ends at the decision — later monitor events are not part of it.
+    expect(ids).not.toContain("T-MONITOR");
+    // Ordered oldest-first (observable sequence).
+    const ts = trace.map((e) => e.timestamp);
+    expect([...ts].sort((a, b) => a - b)).toEqual(ts);
+  });
+
+  it("returns empty decision trace when no decision event exists", () => {
+    const trace = buildDecisionTrace([
+      makeEvent({ eventType: "MARKET_SCAN" }),
+      makeEvent({ eventType: "POSITION_MONITOR" }),
+    ]);
+    expect(trace).toEqual([]);
   });
 
   it("groups events by calendar date, oldest first within each day", () => {

@@ -18,9 +18,7 @@ import { AlertTriangle } from "lucide-react";
 import type { AgentStatusPayload, AgentJournalPayload } from "@/backend/api";
 import { formatTime } from "./DashboardFormatters";
 
-const REASONING_LINES_MAX = 5;
-
-/** Internal/system event types — never shown as reasoning or journal entries. */
+/** Internal/system event types — never shown as journal entries. */
 const INTERNAL_EVENTS: ReadonlySet<string> = new Set([
   "PNL_UPDATED",
   "POSITION_MONITOR",
@@ -176,20 +174,7 @@ function deriveJournal(status: AgentStatusPayload): JournalEntryView[] {
   });
 }
 
-/**
- * Live reasoning: the genuinely available agent activity stream, capped to
- * ~5 lines, oldest first, newest last. Internal technical events are
- * excluded. No fake streaming text is ever created.
- */
-function deriveReasoning(status: AgentStatusPayload | null): string[] {
-  if (!status?.recentActivity) return [];
-  return status.recentActivity
-    .filter((a) => !INTERNAL_EVENTS.has(a.eventType) && a.message.trim().length > 0)
-    .slice(-REASONING_LINES_MAX)
-    .map((a) => a.message.trim());
-}
-
-// ─── Persistent Journal / Work Log (DB-backed) ──────────────────────
+// ─── Persistent Journal / Work Process (DB-backed) ──────────────────
 
 function todayLabel(date: string | null | undefined): string {
   if (!date) return "";
@@ -416,10 +401,14 @@ function JournalCard({
 // ─── Card 3: REASONING ───────────────────────────────────────────────
 
 /**
- * Work Log card — structured, observable agent work log built from REAL
- * persisted agent events (never hidden chain-of-thought, never fabricated).
- * Historical entries remain visible while disconnected; only a connection
- * status line indicates the live stream state.
+ * Live Work Process card — the observable agent work stream.
+ *
+ * Shows real persisted events only, categorized:
+ *   [MARKET] → [SIGNAL] → [RISK] → [DECISION] → [ACTION] → [MONITOR]
+ * followed by the decision trace when a real decision event exists.
+ *
+ * No hidden chain-of-thought, no fabricated text. Status line reflects
+ * the actual connection state while stored data stays visible.
  */
 function WorkLogCard({
   journal,
@@ -436,39 +425,71 @@ function WorkLogCard({
 }) {
   const online = status?.status === "RUNNING";
   const workLog = journal?.workLog ?? [];
+  const decisionTrace = journal?.decisionTrace ?? [];
   const hasEvents = workLog.length > 0;
+
+  // Status label — honest, per connection state.
+  let statusLabel = "IDLE";
+  if (journalError) {
+    statusLabel = connecting || journalConnecting ? "RECONNECTING" : "DISCONNECTED — SHOWING STORED EVENTS";
+  } else if (online) {
+    statusLabel = "LIVE";
+  }
 
   return (
     <section className="rounded-sm border border-hairline bg-card/40 p-4 sm:p-5">
-      <CardHeader title="Live Work Log" meta={online ? "LIVE" : "PERSISTED"} live={online && hasEvents} />
+      <CardHeader title="Live Work Process" meta={statusLabel} live={online && hasEvents} />
 
-      {/* Connection status — never replaces stored data. */}
-      {journalError && (
-        <div className="mt-2 flex items-center gap-2 font-mono text-[0.62rem] uppercase tracking-[0.2em] text-amber-signal">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-signal" />
-          {connecting || journalConnecting ? "Reconnecting" : "Disconnected — showing stored events"}
-        </div>
-      )}
-
-      <div className="mt-3 max-h-64 overflow-hidden">
+      <div className="mt-3 max-h-80 overflow-y-auto">
         {journalConnecting && !journal ? (
           <Honest text="Connecting" />
         ) : hasEvents ? (
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-2.5">
             {workLog.map((e) => (
-              <div key={e.id} className="font-mono text-xs text-foreground/85">
-                <span className="mr-2 text-primary/70">[{e.category}]</span>
-                <span className="mr-2 text-muted-foreground/50">{e.time}</span>
-                {e.message}
+              <div key={e.id} className="flex items-start gap-2">
+                <span
+                  className={`mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
+                    e.category === "ACTION"
+                      ? "bg-gain"
+                      : e.category === "DECISION"
+                        ? "bg-amber-signal"
+                        : "bg-cyan-signal/70"
+                  }`}
+                />
+                <div className="min-w-0">
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-mono text-[0.62rem] uppercase tracking-[0.16em] text-primary/70">
+                      [{e.category}]
+                    </span>
+                    <span className="font-mono text-[0.62rem] text-muted-foreground/50">{e.time}</span>
+                  </div>
+                  <div className="break-words font-mono text-xs text-foreground/85">{e.message}</div>
+                </div>
               </div>
             ))}
           </div>
         ) : journalError ? (
           <Honest text="Work log data unavailable" />
         ) : (
-          <Honest text="No agent events recorded yet" />
+          <Honest text="No observable agent activity yet." />
         )}
       </div>
+
+      {/* Decision trace — observable chain of a real decision, newest last. */}
+      {decisionTrace.length > 1 && (
+        <div className="mt-4 border-t border-hairline/60 pt-3">
+          <div className="label-mono mb-2">Decision Trace</div>
+          <div className="flex flex-col gap-1">
+            {decisionTrace.map((e) => (
+              <div key={`trace-${e.id}`} className="font-mono text-[0.7rem] text-foreground/75">
+                <span className="mr-2 text-muted-foreground/50">{e.time}</span>
+                <span className="mr-2 text-primary/70">[{e.category}]</span>
+                {e.message}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
