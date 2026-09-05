@@ -8,7 +8,16 @@
  * Repository code imports these functions instead of getDatabase().
  */
 
+import { createRequire } from "module";
+import { readFileSync, mkdirSync, existsSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { logger } from "../logger";
+
+// ESM-safe CommonJS loader for native modules (require is unavailable in
+// Vite SSR / module runners). better-sqlite3 is a native CJS addon.
+const nodeRequire = createRequire(import.meta.url);
+const here = dirname(fileURLToPath(import.meta.url));
 
 // ─── PostgreSQL Connection (Lazy Singleton) ─────────────────────────
 
@@ -45,9 +54,7 @@ let sqliteDb: any = null;
 function getSqliteConnection(): any {
   if (sqliteDb) return sqliteDb;
 
-  const Database = require("better-sqlite3");
-  const { readFileSync, mkdirSync, existsSync } = require("fs");
-  const { join, dirname } = require("path");
+  const Database = nodeRequire("better-sqlite3");
 
   const DEFAULT_DB_PATH = join(process.cwd(), "data", "agent.db");
   const dbPath = process.env["DATABASE_PATH"] || DEFAULT_DB_PATH;
@@ -62,7 +69,7 @@ function getSqliteConnection(): any {
   sqliteDb.pragma("busy_timeout = 5000");
 
   // Initialize schema
-  const schemaPath = join(__dirname, "schema.sql");
+  const schemaPath = join(here, "schema.sql");
   const schema = readFileSync(schemaPath, "utf-8");
   sqliteDb.exec(schema);
 
@@ -197,14 +204,12 @@ export function isPostgresConfigured(): boolean {
  * This bypasses the adapter and directly creates an in-memory SQLite database.
  */
 export function createTestDatabase(): any {
-  const Database = require("better-sqlite3");
-  const { readFileSync } = require("fs");
-  const { join } = require("path");
+  const Database = nodeRequire("better-sqlite3");
 
   const testDb = new Database(":memory:");
   testDb.pragma("foreign_keys = ON");
 
-  const schemaPath = join(__dirname, "schema.sql");
+  const schemaPath = join(here, "schema.sql");
   const schema = readFileSync(schemaPath, "utf-8");
   testDb.exec(schema);
 
