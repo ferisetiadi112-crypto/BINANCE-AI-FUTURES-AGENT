@@ -5,4 +5,6 @@
 export * from "./types";
 export * from "./strategies";
 export * from "./decision-engine";
+export * from "./agent-core";
+export * from "./autonomous-cycle";
 export * as LLM from "./llm";

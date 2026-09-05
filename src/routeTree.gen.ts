@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AiAuditRouteImport } from './routes/ai-audit'
 import { Route as AiIntelligenceRouteImport } from './routes/ai-intelligence'
 import { Route as AiLogbookRouteImport } from './routes/ai-logbook'
+import { Route as ChatAgentRouteImport } from './routes/chat-agent'
 import { Route as CommandCenterRouteImport } from './routes/command-center'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as LearningRouteImport } from './routes/learning'
@@ -41,6 +42,11 @@ const AiIntelligenceRoute = AiIntelligenceRouteImport.update({
 const AiLogbookRoute = AiLogbookRouteImport.update({
   id: '/ai-logbook',
   path: '/ai-logbook',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ChatAgentRoute = ChatAgentRouteImport.update({
+  id: '/chat-agent',
+  path: '/chat-agent',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CommandCenterRoute = CommandCenterRouteImport.update({
@@ -94,6 +100,7 @@ export interface FileRoutesByFullPath {
   '/ai-audit': typeof AiAuditRoute
   '/ai-intelligence': typeof AiIntelligenceRoute
   '/ai-logbook': typeof AiLogbookRoute
+  '/chat-agent': typeof ChatAgentRoute
   '/command-center': typeof CommandCenterRoute
   '/dashboard': typeof DashboardRoute
   '/learning': typeof LearningRoute
@@ -109,6 +116,7 @@ export interface FileRoutesByTo {
   '/ai-audit': typeof AiAuditRoute
   '/ai-intelligence': typeof AiIntelligenceRoute
   '/ai-logbook': typeof AiLogbookRoute
+  '/chat-agent': typeof ChatAgentRoute
   '/command-center': typeof CommandCenterRoute
   '/dashboard': typeof DashboardRoute
   '/learning': typeof LearningRoute
@@ -125,6 +133,7 @@ export interface FileRoutesById {
   '/ai-audit': typeof AiAuditRoute
   '/ai-intelligence': typeof AiIntelligenceRoute
   '/ai-logbook': typeof AiLogbookRoute
+  '/chat-agent': typeof ChatAgentRoute
   '/command-center': typeof CommandCenterRoute
   '/dashboard': typeof DashboardRoute
   '/learning': typeof LearningRoute
@@ -142,6 +151,7 @@ export interface FileRouteTypes {
     | '/ai-audit'
     | '/ai-intelligence'
     | '/ai-logbook'
+    | '/chat-agent'
     | '/command-center'
     | '/dashboard'
     | '/learning'
@@ -157,6 +167,7 @@ export interface FileRouteTypes {
     | '/ai-audit'
     | '/ai-intelligence'
     | '/ai-logbook'
+    | '/chat-agent'
     | '/command-center'
     | '/dashboard'
     | '/learning'
@@ -172,6 +183,7 @@ export interface FileRouteTypes {
     | '/ai-audit'
     | '/ai-intelligence'
     | '/ai-logbook'
+    | '/chat-agent'
     | '/command-center'
     | '/dashboard'
     | '/learning'
@@ -188,6 +200,7 @@ export interface RootRouteChildren {
   AiAuditRoute: typeof AiAuditRoute
   AiIntelligenceRoute: typeof AiIntelligenceRoute
   AiLogbookRoute: typeof AiLogbookRoute
+  ChatAgentRoute: typeof ChatAgentRoute
   CommandCenterRoute: typeof CommandCenterRoute
   DashboardRoute: typeof DashboardRoute
   LearningRoute: typeof LearningRoute
@@ -227,6 +240,13 @@ declare module '@tanstack/react-router' {
       path: '/ai-logbook'
       fullPath: '/ai-logbook'
       preLoaderRoute: typeof AiLogbookRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/chat-agent': {
+      id: '/chat-agent'
+      path: '/chat-agent'
+      fullPath: '/chat-agent'
+      preLoaderRoute: typeof ChatAgentRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/command-center': {
@@ -300,6 +320,7 @@ const rootRouteChildren: RootRouteChildren = {
   AiAuditRoute: AiAuditRoute,
   AiIntelligenceRoute: AiIntelligenceRoute,
   AiLogbookRoute: AiLogbookRoute,
+  ChatAgentRoute: ChatAgentRoute,
   CommandCenterRoute: CommandCenterRoute,
   DashboardRoute: DashboardRoute,
   LearningRoute: LearningRoute,

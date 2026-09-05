@@ -13,6 +13,7 @@ import {
   ScrollText,
   ShieldAlert,
   Cpu,
+  MessageSquare,
 } from "lucide-react";
 import {
   Sidebar,
@@ -58,6 +59,7 @@ const groups = [
     items: [
       { title: "Risk Center", url: "/risk-center", icon: ShieldAlert },
       { title: "Command Center", url: "/command-center", icon: Command },
+      { title: "Chat Agent", url: "/chat-agent", icon: MessageSquare },
     ],
   },
 ];

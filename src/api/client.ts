@@ -46,6 +46,8 @@ import {
   getSystemReadiness,
   getAgentStatus,
   getAgentJournal,
+  sendChatMessage,
+  executeChatAction,
 } from "../backend/api";
 import type { ApiResponse } from "../types/api";
 import {
@@ -302,4 +304,35 @@ export async function fetchAgentJournal(date?: string) {
 export async function fetchAgentStatus() {
   const result = await withTimeout("agent-status", getAgentStatus(), BUDGET_FAST_MS);
   return result as ApiResponse<import("../backend/api").AgentStatusPayload>;
+}
+
+// ─── Chat Agent (Phase 3.8-C.1) ──────────────────────────────────
+// Boss-guarded server function → existing LLM provider chain.
+// READ-ONLY: never touches executor, risk engine, or journal.
+
+export async function sendAgentChat(
+  message: string,
+  history: Array<{ role: "boss" | "agent"; content: string }> = [],
+) {
+  // LLM chain can take longer than a fast budget — bounded at 30s.
+  const result = await withTimeout(
+    "chat-agent",
+    sendChatMessage({ data: { message, history } }),
+    30_000,
+  );
+  return result as import("../backend/api/chat-agent").ChatAgentResponse;
+}
+
+// ─── Controlled Actions (Phase 3.8-D.2) ──────────────────────────
+// Boss-guarded; registry allowlist + permission + safety gate server-side.
+// READ_ONLY actions run immediately; mutations require confirmation (none
+// exist in D.2). Trading/money actions are always DENIED.
+
+export async function runChatAction(actionId: string) {
+  const result = await withTimeout(
+    "chat-action",
+    executeChatAction({ data: { actionId } }),
+    15_000,
+  );
+  return result as import("../backend/api/controlled-actions").ActionExecutionResult;
 }

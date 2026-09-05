@@ -7,6 +7,7 @@ import { startTradingRuntime } from "./backend/trading/runtime";
 import { initializeDatabase } from "./backend/database";
 import { initializeUnifiedState } from "./backend/exchange/unified-state";
 import { initializeMarketDataState } from "./backend/exchange/market-data-state";
+import { shouldStartAutonomousLoop, startAutonomousLoop } from "./backend/ai/autonomous-cycle";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -147,6 +148,27 @@ function initializeRuntimeInBackground(): Promise<void> {
       initializeMarketDataState().catch((err) => {
         console.error(`[server] Market data state init error: ${err}`);
       });
+
+      // Phase 3.8-D.5: Production autonomous loop wiring.
+      // READ-ONLY observation lifecycle for ONE agent (orbital-futures-agent),
+      // driven by the existing decision-scheduler. Fail-closed: the loop only
+      // starts when DB init + runtime init both succeeded and no boot error
+      // exists. It never enables trading — the loop's hard rule is
+      // tradingEnabled: false and the only actions are READ_ONLY registry ones.
+      if (
+        shouldStartAutonomousLoop({
+          databaseReady: _dbReady,
+          runtimeInitialized: _runtimeReady,
+          bootError: _runtimeError,
+        })
+      ) {
+        startAutonomousLoop();
+        console.log("[server] Autonomous loop started (READ-ONLY).");
+      } else {
+        console.warn(
+          `[server] Autonomous loop NOT started (fail-closed): db=${_dbReady} runtime=${_runtimeReady} bootError=${_runtimeError ?? "none"}`,
+        );
+      }
     } catch (err) {
       _runtimeError = `Runtime start failed: ${err}`;
       console.error(`[server] Runtime start failed: ${err}`);

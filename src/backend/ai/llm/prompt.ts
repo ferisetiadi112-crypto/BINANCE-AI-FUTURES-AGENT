@@ -15,10 +15,13 @@
 import type { MarketState } from "../../runtime/types";
 import type { MemoryContextForPrompt } from "../memory-context";
 import type { ResearchResult } from "../../research/research-engine";
+import { AGENT_PRINCIPLES_SYSTEM_BLOCK } from "../agent-core";
 
 const CAPITAL = "$5.00";
 const DAILY_GUARDRAIL = "±$0.50";
-const SYSTEM_CONTEXT = `You are a conservative crypto futures trading AI for a $5 paper trading account on Binance Futures Testnet.
+const SYSTEM_CONTEXT = `${AGENT_PRINCIPLES_SYSTEM_BLOCK}
+
+You are a conservative crypto futures trading AI for a $5 paper trading account on Binance Futures Testnet.
 
 CRITICAL RULES:
 1. Capital is only ${CAPITAL}. You CANNOT risk more than 20% ($1.00) per trade.
