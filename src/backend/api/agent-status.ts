@@ -20,7 +20,12 @@
  */
 
 import { createServerFn } from "@tanstack/react-start";
-import { getOrchestrator, getRuntimeSnapshot, isRuntimeRunning } from "../trading/runtime";
+import {
+  getOrchestrator,
+  getRuntimeSnapshot,
+  isRuntimeRunning,
+  STALE_TICK_THRESHOLD_MS,
+} from "../trading/runtime";
 import type { TradingOrchestrator } from "../trading/orchestrator";
 import type { RuntimeSnapshot } from "../trading/runtime";
 import { getRecentJournalEvents } from "../journal";
@@ -241,6 +246,15 @@ export function buildAgentStatus(input: {
   const riskStats = orchestrator.getDailyStats();
   const decision = state.lastDecision;
 
+  // Phase 3.7: truthful status. A live orchestrator object alone is NOT proof
+  // of a running loop (Vercel serverless freezes setInterval between
+  // invocations). RUNNING requires a recent successful tick; otherwise the
+  // instance is STALE. Market-data availability stays a separate concern:
+  // a stale feed degrades currentTask/finding, never the runtime status.
+  const tickAgeMs = runtime.stats.lastTickAt > 0 ? Date.now() - runtime.stats.lastTickAt : Infinity;
+  const status: AgentStatusPayload["status"] =
+    tickAgeMs <= STALE_TICK_THRESHOLD_MS ? "RUNNING" : "STARTING";
+
   // ── Current task: derived from the latest runtime event / tick ──
   let currentTask: string | null = null;
   const lastEvent =
@@ -320,7 +334,7 @@ export function buildAgentStatus(input: {
   );
 
   return {
-    status: "RUNNING",
+    status,
     executionMode: state.executionMode,
     tradingEnabled: orchestrator.getRiskEngine().isTradingEnabled(),
     currentTask,

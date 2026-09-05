@@ -69,7 +69,8 @@ import { MarketScanner } from "../market/scanner";
 import { ResearchEngine } from "../research/research-engine";
 import { P6DecisionEngine } from "../research/p6-decision-engine";
 import { getMarketDataService } from "../market/data-service";
-import { logger } from "../logger";import { walletRepository } from "../repositories/wallet";
+import { logger } from "../logger";
+import { walletRepository } from "../repositories/wallet";
 import {
   recordMarketScan,
   recordRiskCheck,
@@ -89,6 +90,7 @@ import {
   recordLessonStored,
   recordNoReliableLesson,
   recordStartupReconciliation,
+  recordRemotePositionDiscovered,
 } from "../journal";
 import { generatePostTradeReview } from "../journal/post-trade-review";
 import { getSessionDay, hasSessionDayChanged } from "../journal/retention";
@@ -258,7 +260,9 @@ export class TradingOrchestrator {
           );
           // Track these positions in risk engine
           this.riskEngine.recordPositionOpened(remote.margin);
-          recordPositionOpened(remote.symbol, remote.side, remote.margin, remote.leverage);
+          // Phase 3.7: this is a reconciliation sync of a pre-existing Binance
+          // position — recorded as STARTUP_RECONCILIATION, never POSITION_OPENED.
+          recordRemotePositionDiscovered(remote.symbol, remote.side, remote.margin, remote.leverage);
         }
       }
 

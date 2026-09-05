@@ -2,6 +2,7 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import { logSsrError } from "./lib/ssr-error-observability";
 import { startTradingRuntime } from "./backend/trading/runtime";
 import { initializeDatabase } from "./backend/database";
 import { initializeUnifiedState } from "./backend/exchange/unified-state";
@@ -71,7 +72,10 @@ async function getServerEntry(): Promise<ServerEntry> {
 
 // h3 swallows in-handler throws into a normal 500 Response with body
 // {"unhandled":true,"message":"HTTPError"} — try/catch alone never fires for those.
-async function normalizeCatastrophicSsrResponse(response: Response): Promise<Response> {
+async function normalizeCatastrophicSsrResponse(
+  response: Response,
+  request: Request,
+): Promise<Response> {
   if (response.status < 500) return response;
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.includes("application/json")) return response;
@@ -80,6 +84,13 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
   if (!isH3SwallowedErrorBody(body)) return response;
 
   console.error(consumeLastCapturedError() ?? new Error(`h3 swallowed SSR error: ${body}`));
+  // Phase 3.5-X: structured correlation log (requestId/path/source) —
+  // response behavior unchanged.
+  logSsrError({
+    source: "h3_swallowed",
+    request,
+    error: consumeLastCapturedError() ?? new Error(`h3 swallowed SSR error: ${body}`),
+  });
   return new Response(renderErrorPage(), {
     status: 500,
     headers: { "content-type": "text/html; charset=utf-8" },
@@ -162,9 +173,11 @@ export default {
 
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
-      return await normalizeCatastrophicSsrResponse(response);
+      return await normalizeCatastrophicSsrResponse(response, request);
     } catch (error) {
       console.error(error);
+      // Phase 3.5-X: structured correlation log — response behavior unchanged.
+      logSsrError({ source: "server_top_level", request, error });
       return new Response(renderErrorPage(), {
         status: 500,
         headers: { "content-type": "text/html; charset=utf-8" },

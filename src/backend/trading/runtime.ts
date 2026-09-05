@@ -49,6 +49,15 @@ import { getReviews } from "../journal/post-trade-review";
 const TICK_INTERVAL_MS = 15_000;
 const POSITION_MONITOR_INTERVAL_MS = 30_000;
 
+/**
+ * Phase 3.7: A runtime instance is only "RUNNING" if it ticked within this
+ * window. 3× tick interval (~45s) tolerates one or two slow ticks on a warm
+ * serverless instance while still catching a frozen/recycled loop whose
+ * setInterval no longer fires. Evidence-based, not arbitrary: one missed tick
+ * = noise, three missed ticks = the loop is dead in practice.
+ */
+export const STALE_TICK_THRESHOLD_MS = 3 * TICK_INTERVAL_MS;
+
 // ─── Runtime Stats ──────────────────────────────────────────────
 
 export type RuntimeEvent = {

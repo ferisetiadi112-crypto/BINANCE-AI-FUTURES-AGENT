@@ -395,6 +395,33 @@ export function recordPositionOpened(
   });
 }
 
+/**
+ * Phase 3.7: A remote-only Binance position discovered during startup
+ * reconciliation is a synchronization fact, NOT an AI trade. Recorded under
+ * the existing STARTUP_RECONCILIATION event type so the journal never
+ * presents it as "Position opened" by the agent.
+ */
+export function recordRemotePositionDiscovered(
+  symbol: string,
+  side: "LONG" | "SHORT",
+  margin: number,
+  leverage: number,
+): JournalEvent {
+  return recordJournalEvent({
+    eventType: "STARTUP_RECONCILIATION",
+    importance: "HIGH",
+    symbol,
+    message: `Remote position discovered during startup reconciliation: ${side} ${symbol} (margin: $${margin.toFixed(2)}, ${leverage}x leverage) — synchronized to local state, not an AI order`,
+    position: {
+      symbol,
+      side,
+      entryPrice: 0,
+      margin,
+      leverage,
+    },
+  });
+}
+
 export function recordPositionClosed(
   symbol: string,
   side: "LONG" | "SHORT",
