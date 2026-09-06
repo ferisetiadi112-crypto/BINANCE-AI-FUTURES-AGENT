@@ -75,6 +75,7 @@ export type AIProviderName =
   | "groq"
   | "cerebras"
   | "openrouter"
+  | "nvidia-nim"
   | "mistral";
 
 // ─── Provider Configuration ───────────────────────────────────────────

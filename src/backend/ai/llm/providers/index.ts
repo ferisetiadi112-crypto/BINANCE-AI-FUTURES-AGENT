@@ -17,6 +17,7 @@ import { CerebrasProvider } from "./cerebras";
 import { GeminiProvider } from "./gemini";
 import { OpenRouterProvider } from "./openrouter";
 import { MistralProvider } from "./mistral";
+import { NvidiaNimProvider } from "./nvidia-nim";
 import type { AIProvider, AIProviderName } from "../types";
 import { logger } from "../../../logger";
 
@@ -30,7 +31,7 @@ export function getAvailableProviders(): AIProvider[] {
     new GeminiProvider(),     // 1. PRIMARY — GEMINI_API_KEY
     new GroqProvider(),       // 2. FALLBACK 1 — GROQ_API_KEY
     new OpenRouterProvider(), // 3. FALLBACK 2 — OPENROUTER_API_KEY
-    new CerebrasProvider(),   // 4. FALLBACK 3 — CEREBRAS_API_KEY
+    new NvidiaNimProvider(),  // 4. FALLBACK 3 — NVIDIA_NIM_API_KEY
     new MistralProvider(),    // 5. FALLBACK 4 — MISTRAL_API_KEY
   ];
 
@@ -92,4 +93,5 @@ export { GroqProvider } from "./groq";
 export { CerebrasProvider } from "./cerebras";
 export { GeminiProvider } from "./gemini";
 export { OpenRouterProvider } from "./openrouter";
+export { NvidiaNimProvider } from "./nvidia-nim";
 export { MistralProvider } from "./mistral";

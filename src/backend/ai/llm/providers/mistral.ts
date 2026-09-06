@@ -11,7 +11,7 @@ import type { ProviderConfig } from "../types";
 const MISTRAL_CONFIG: ProviderConfig = {
   name: "mistral",
   baseUrl: "https://api.mistral.ai/v1",
-  model: "mistral-small-latest",
+  model: "ministral-8b-latest",
   apiKeyEnvVar: "MISTRAL_API_KEY",
   maxTokens: 512,
   temperature: 0.3,
