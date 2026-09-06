@@ -49,12 +49,14 @@ function metaLabel(meta: ChatMsg["meta"]): string | null {
   return `AI · ${name}${ms ? ` · ${fb}${ms}` : ""}`;
 }
 
-function timeLabel(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return "";
-  }
+/** Exported for tests (Phase 3.8-D.15 regression: never render "Invalid Date"). */
+export function timeLabel(iso: string): string {
+  // Phase 3.8-D.15: guard against missing/invalid timestamps so the chat UI
+  // can never render "Invalid Date" (AgentMonitor's fmtTime already guards).
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function ChatAgent() {
