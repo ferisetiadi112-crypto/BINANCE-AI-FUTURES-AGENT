@@ -11,7 +11,7 @@ import type { ProviderConfig } from "../types";
 const CEREBRAS_CONFIG: ProviderConfig = {
   name: "cerebras",
   baseUrl: "https://api.cerebras.ai/v1",
-  model: "llama-3.3-70b",
+  model: "gpt-oss-120b",
   apiKeyEnvVar: "CEREBRAS_API_KEY",
   maxTokens: 512,
   temperature: 0.3,

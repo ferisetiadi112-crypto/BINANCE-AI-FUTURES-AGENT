@@ -11,7 +11,7 @@ import { logger } from "../../../logger";
 const GEMINI_CONFIG: ProviderConfig = {
   name: "gemini",
   baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-  model: "gemini-2.0-flash",
+  model: "gemini-3.5-flash-lite",
   apiKeyEnvVar: "GEMINI_API_KEY",
   maxTokens: 512,
   temperature: 0.3,
