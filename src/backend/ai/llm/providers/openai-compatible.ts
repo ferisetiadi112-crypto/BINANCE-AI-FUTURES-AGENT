@@ -131,6 +131,20 @@ export abstract class OpenAICompatibleProvider {
     try {
       parsed = JSON.parse(cleaned);
     } catch {
+      // Some models emit prose (e.g. "LIVE_OK") before/around the JSON object.
+      // Recover by extracting the FIRST balanced {...} block — never loose parsing;
+      // the extracted object still must pass AIDecisionSchema below.
+      const start = cleaned.indexOf("{");
+      const end = cleaned.lastIndexOf("}");
+      if (start !== -1 && end > start) {
+        try {
+          parsed = JSON.parse(cleaned.slice(start, end + 1));
+        } catch {
+          parsed = undefined;
+        }
+      }
+    }
+    if (parsed === undefined) {
       throw this.createError(
         `${this.name} returned invalid JSON`,
         "INVALID_JSON",

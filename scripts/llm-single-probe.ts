@@ -1,6 +1,7 @@
 /**
- * Read-only diagnostic: probe a single provider's generateDecision with the
- * diagnostic prompt. Usage: bun scripts/llm-single-probe.ts <providerName>
+ * Read-only diagnostic: probe a single provider's generateDecision with a
+ * schema-valid prompt (strategy enum from AIDecisionSchema).
+ * Usage: bun scripts/llm-single-probe.ts <providerName>
  */
 import { getProviderByName } from "../src/backend/ai/llm/providers";
 
@@ -14,12 +15,10 @@ if (!provider) {
 const prompt = JSON.stringify({
   system:
     "You are a diagnostic endpoint of an AI trading system. This request is NOT a trading request. " +
-    "Respond ONLY with a JSON object with keys: direction (\"NO_TRADE\"), action (\"WAIT\"), " +
-    "confidence (number 0-1), strategy (\"DIAGNOSTIC\"), reasoning (short text). " +
-    'Example: {"direction":"NO_TRADE","action":"WAIT","confidence":0.0,"strategy":"DIAGNOSTIC","reasoning":"provider reachable"}',
+    'Respond ONLY with a JSON object: {"direction":"NO_TRADE","confidence":0.0,"strategy":"TREND_FOLLOWING","reasoning":"<short text>"}. ' +
+    "strategy MUST be one of: TREND_FOLLOWING, MOMENTUM, BREAKOUT, PULLBACK, MEAN_REVERSION.",
   user:
-    "Reply with exactly: LIVE_OK — then return JSON containing only: " +
-    '{"direction":"NO_TRADE","action":"WAIT","confidence":0.0,"strategy":"DIAGNOSTIC","reasoning":"LIVE_OK"}',
+    'Reply with exactly: LIVE_OK — then return JSON only: {"direction":"NO_TRADE","confidence":0.0,"strategy":"TREND_FOLLOWING","reasoning":"LIVE_OK"}',
 });
 
 const started = Date.now();

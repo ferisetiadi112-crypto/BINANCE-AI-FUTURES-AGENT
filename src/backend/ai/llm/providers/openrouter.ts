@@ -11,7 +11,7 @@ import type { ProviderConfig } from "../types";
 const OPENROUTER_CONFIG: ProviderConfig = {
   name: "openrouter",
   baseUrl: "https://openrouter.ai/api/v1",
-  model: "nvidia/nemotron-3.5-lightning:free",
+  model: "minimax/minimax-m3:free",
   apiKeyEnvVar: "OPENROUTER_API_KEY",
   maxTokens: 512,
   temperature: 0.3,
