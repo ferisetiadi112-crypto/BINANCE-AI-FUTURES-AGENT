@@ -5,7 +5,7 @@
 import { getProviderByName, getAvailableProviders } from "../src/backend/ai/llm/providers";
 import type { AIDecisionOutput } from "../src/backend/ai/llm/types";
 
-const names = ["gemini", "groq", "openrouter", "cerebras", "mistral"] as const;
+const names = ["gemini", "groq", "openrouter", "nvidia-nim", "mistral"] as const;
 
 const SYSTEM =
   "You are a diagnostic endpoint of an AI trading system. This request is NOT a trading request. " +
