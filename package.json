@@ -8,6 +8,7 @@
     "build": "vite build && sh -c 'test -d .output/public && { mkdir -p dist && cp -r .output/public/. dist/; }' || true",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
+    "start": "node --env-file-if-exists=.env .output/server/index.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",
