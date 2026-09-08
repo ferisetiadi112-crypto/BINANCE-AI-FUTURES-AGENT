@@ -9,15 +9,14 @@
  */
 
 import { createRequire } from "module";
-import { readFileSync, mkdirSync, existsSync } from "fs";
+import { mkdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
-import { fileURLToPath } from "url";
 import { logger } from "../logger";
+import { SCHEMA_SQL } from "./schema-source";
 
 // ESM-safe CommonJS loader for native modules (require is unavailable in
 // Vite SSR / module runners). better-sqlite3 is a native CJS addon.
 const nodeRequire = createRequire(import.meta.url);
-const here = dirname(fileURLToPath(import.meta.url));
 
 // ─── PostgreSQL Connection (Lazy Singleton) ─────────────────────────
 
@@ -159,10 +158,10 @@ function getSqliteConnection(): any {
   sqliteDb.pragma("foreign_keys = ON");
   sqliteDb.pragma("busy_timeout = 5000");
 
-  // Initialize schema
-  const schemaPath = join(here, "schema.sql");
-  const schema = readFileSync(schemaPath, "utf-8");
-  sqliteDb.exec(schema);
+  // Initialize schema from the bundled embedded copy (works in the Nitro
+  // production bundle .output/server/index.mjs regardless of process.cwd()).
+  // CREATE TABLE IF NOT EXISTS / INSERT OR IGNORE → existing data is preserved.
+  sqliteDb.exec(SCHEMA_SQL);
 
   sqliteDb.prepare(`
     INSERT OR REPLACE INTO system_config (key, value, description, updated_at)
@@ -299,10 +298,7 @@ export function createTestDatabase(): any {
 
   const testDb = new Database(":memory:");
   testDb.pragma("foreign_keys = ON");
-
-  const schemaPath = join(here, "schema.sql");
-  const schema = readFileSync(schemaPath, "utf-8");
-  testDb.exec(schema);
+  testDb.exec(SCHEMA_SQL);
 
   return testDb;
 }
