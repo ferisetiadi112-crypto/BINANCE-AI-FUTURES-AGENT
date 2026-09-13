@@ -21,6 +21,19 @@
 import { createHmac, createHash } from "crypto";
 import { logger } from "../logger";
 import { walletRepository } from "../repositories/wallet";
+import {
+  executeWithRestPolicy,
+  getCircuitState,
+  allowHalfOpenProbe,
+  probeSucceeded,
+  probeFailed,
+  BinanceRestSuppressedError,
+  CACHE_TTL_TICKER_MS,
+  CACHE_TTL_KLINES_MS,
+  CACHE_TTL_ACCOUNT_MS,
+  CACHE_TTL_OPEN_ORDERS_MS,
+  CACHE_TTL_EXCHANGE_INFO_MS,
+} from "./rest-policy";
 
 // ─── Configuration ──────────────────────────────────────────────────
 
@@ -72,7 +85,8 @@ export type TestnetAccountResponse = {
   }>;
   positions: Array<{
     symbol: string;
-    positionAmount: string;
+    // Real Binance /fapi/v2/account field name (NOT "positionAmount")
+    positionAmt: string;
     entryPrice: string;
     markPrice: string;
     unRealizedProfit: string;
@@ -113,7 +127,8 @@ export type TestnetOrderResponse = {
 
 export type TestnetPositionResponse = {
   symbol: string;
-  positionAmount: string;
+  // Real Binance field name (NOT "positionAmount")
+  positionAmt: string;
   entryPrice: string;
   markPrice: string;
   unRealizedProfit: string;
@@ -187,7 +202,20 @@ export type ExchangeInfoResponse = {
   symbols: SymbolInfo[];
 };
 
-// ─── Binance Testnet Client ─────────────────────────────────────────
+// ─── Binance Testnet Client ───────────────────────────────────────
+
+/**
+ * Safe parse of a Binance positionAmt string.
+ * Only finite, non-zero amounts count as an open position — guards against
+ * undefined/missing/invalid fields producing NaN and being treated as open.
+ */
+export function parsePositionAmount(
+  positionAmt: string | undefined | null,
+): { amt: number; isOpen: boolean; side: "LONG" | "SHORT" } {
+  const amt = Number.parseFloat(positionAmt ?? "");
+  const isOpen = Number.isFinite(amt) && amt !== 0;
+  return { amt, isOpen, side: amt > 0 ? "LONG" : "SHORT" };
+}
 
 export class BinanceTestnetClient {
   private apiKey: string;
@@ -250,6 +278,36 @@ export class BinanceTestnetClient {
     params: Record<string, string> = {},
     signed = true,
   ): Promise<T> {
+    // E.2-FIX-D.6: every Binance REST request passes through the centralized
+    // circuit-breaker gate. While OPEN, all REST is suppressed (WS continues);
+    // during HALF_OPEN exactly one probe request may pass.
+    const circuit = getCircuitState();
+    if (circuit === "OPEN" || circuit === "HALF_OPEN") {
+      if (allowHalfOpenProbe()) {
+        // Single half-open probe proceeds; all others stay suppressed.
+        try {
+          const result = await this._doRequest<T>(method, endpoint, params, signed);
+          probeSucceeded();
+          return result;
+        } catch (err) {
+          probeFailed(err);
+          throw err;
+        }
+      }
+      throw new BinanceRestSuppressedError(
+        `REST suppressed — Binance circuit ${circuit} (rate limit / IP ban cooldown)`,
+      );
+    }
+
+    return this._doRequest<T>(method, endpoint, params, signed);
+  }
+
+  private async _doRequest<T>(
+    method: "GET" | "POST" | "DELETE",
+    endpoint: string,
+    params: Record<string, string> = {},
+    signed = true,
+  ): Promise<T> {
     const url = new URL(endpoint, this.baseUrl);
 
     if (signed) {
@@ -262,19 +320,17 @@ export class BinanceTestnetClient {
     let fullUrl: string;
     let headers: Record<string, string> = {
       "Accept": "application/json",
-      "X-MBX-APIKEY": this.apiKey,
     };
+
+    if (signed) {
+      headers["X-MBX-APIKEY"] = this.apiKey;
+    }
 
     if (method === "GET" || method === "DELETE") {
       fullUrl = `${url}?${queryString}`;
     } else {
-      // POST with form body
       fullUrl = url.toString();
       headers["Content-Type"] = "application/x-www-form-urlencoded";
-    }
-
-    if (signed) {
-      headers["X-MBX-APIKEY"] = this.apiKey;
     }
 
     const controller = new AbortController();
@@ -325,14 +381,60 @@ export class BinanceTestnetClient {
 
   // ─── Account & Balance ───────────────────────────────────────────
 
+  /**
+   * E.2-FIX-D.6: cached shared account snapshot.
+   * Full /fapi/v2/account is capped at 1 request / 60s regardless of how many
+   * symbols or subsystems need it. Concurrent callers dedup onto one request.
+   * Trade-critical paths (placeMarketOrder balance validation) still read from
+   * this snapshot — freshness of 60s is acceptable for pre-trade checks and
+   * Binance itself re-validates the order.
+   */
   async getAccountInfo(): Promise<TestnetAccountResponse> {
     logger.debug("binance-testnet", "Fetching account info");
-    return this.request<TestnetAccountResponse>("GET", "/fapi/v2/account");
+    return executeWithRestPolicy<TestnetAccountResponse>({
+      key: "account:/fapi/v2/account",
+      ttlMs: CACHE_TTL_ACCOUNT_MS,
+      execute: async () => ({
+        value: await this._doRequest<TestnetAccountResponse>("GET", "/fapi/v2/account"),
+      }),
+    });
   }
 
   async getBalance(): Promise<TestnetBalanceResponse[]> {
     logger.debug("binance-testnet", "Fetching balance");
-    return this.request<TestnetBalanceResponse[]>("GET", "/fapi/v2/balance");
+    // E.2-FIX-D.14: /fapi/v2/balance (weight 5) previously bypassed the REST
+    // policy and was called per-tick via syncBalance() (weight 5) IN ADDITION
+    // to the /fapi/v2/account snapshot (weight 5) already used by
+    // getAccountInfo()/getPositions()/getAccountSnapshot(). Both endpoints
+    // return identical balance data. Routing getBalance through the shared
+    // policy under the same 60s account-snapshot TTL lets both paths share
+    // ONE request per TTL instead of two — eliminating the -1003 storm.
+    return executeWithRestPolicy<TestnetBalanceResponse[]>({
+      key: "account:/fapi/v2/balance:usdt-mirror",
+      ttlMs: CACHE_TTL_ACCOUNT_MS,
+      execute: async () => ({
+        // Mirror of the /fapi/v2/account payload — served from the SAME
+        // cached account snapshot (dedup key shared with getAccountInfo).
+        value: this.accountToBalances(
+          await this.getAccountInfo(),
+        ),
+      }),
+    });
+  }
+
+  /** Convert the /fapi/v2/account payload into /fapi/v2/balance-shaped rows. */
+  private accountToBalances(account: TestnetAccountResponse): TestnetBalanceResponse[] {
+    return (account.assets ?? []).map((a) => ({
+      accountAlias: "binance-testnet",
+      asset: a.asset,
+      balance: a.walletBalance,
+      crossWalletBalance: a.crossWalletBalance,
+      crossUnPnl: a.crossUnPnl,
+      availableBalance: a.availableBalance,
+      maxWithdrawAmount: a.availableBalance,
+      marginAvailable: true,
+      updateTimestamp: account.updateTimestamp ?? 0,
+    }));
   }
 
   async getUSDTBalance(): Promise<number> {
@@ -364,7 +466,7 @@ export class BinanceTestnetClient {
     logger.debug("binance-testnet", "Fetching positions");
     const account = await this.getAccountInfo();
     return account.positions.filter(
-      (p) => parseFloat(p.positionAmount) !== 0,
+      (p) => parsePositionAmount(p.positionAmt).isOpen,
     );
   }
 
@@ -492,9 +594,26 @@ export class BinanceTestnetClient {
   }
 
   async getOpenOrders(symbol?: string): Promise<TestnetOrderResponse[]> {
+    // E.2-FIX-D.9: openOrders (no symbol) is a high-weight (~40) request and was
+    // previously uncached/undeduped, hit on every dashboard poll by BOTH the
+    // diagnostics builder and the testnet-status enrichment. Now it passes
+    // through the centralized REST policy: cache (30s), in-flight dedup,
+    // concurrency limiter, backoff, circuit breaker, weight monitoring.
+    // The symbol-specific variant (weight 1) is used only by closePosition
+    // protection-order cancellation and is deliberately left uncached —
+    // it must reflect the exact live order book at cancel time.
     const params: Record<string, string> = {};
     if (symbol) params["symbol"] = symbol;
-    return this.request<TestnetOrderResponse[]>("GET", "/fapi/v1/openOrders", params);
+    if (symbol) {
+      return this.request<TestnetOrderResponse[]>("GET", "/fapi/v1/openOrders", params);
+    }
+    return executeWithRestPolicy<TestnetOrderResponse[]>({
+      key: "openOrders:/fapi/v1/openOrders",
+      ttlMs: CACHE_TTL_OPEN_ORDERS_MS,
+      execute: async () => ({
+        value: await this.request<TestnetOrderResponse[]>("GET", "/fapi/v1/openOrders", params),
+      }),
+    });
   }
 
   async getAllOrders(symbol: string, limit = 50): Promise<TestnetOrderResponse[]> {
@@ -563,6 +682,7 @@ export class BinanceTestnetClient {
 
   /**
    * Get kline/candlestick data for a symbol.
+   * E.2-FIX-D.6: cached (60s TTL) + in-flight dedup + circuit breaker.
    */
   async getKlines(
     symbol: string,
@@ -579,29 +699,52 @@ export class BinanceTestnetClient {
     quoteVolume: number;
     trades: number;
   }>> {
-    const raw = await this.request<Array<[
-      number, string, string, string, string, string, number, string, number,
-    ]>>("GET", "/fapi/v1/klines", {
-      symbol,
-      interval,
-      limit: String(limit),
-    }, false);
+    type Kline = {
+      openTime: number;
+      open: number;
+      high: number;
+      low: number;
+      close: number;
+      volume: number;
+      closeTime: number;
+      quoteVolume: number;
+      trades: number;
+    };
+    return executeWithRestPolicy<Kline[]>({
+      key: `klines:${symbol}:${interval}:${limit}`,
+      ttlMs: CACHE_TTL_KLINES_MS,
+      execute: async () => {
+        const raw = await this.request<Array<[
+          number, string, string, string, string, string, number, string, number,
+        ]>>("GET", "/fapi/v1/klines", {
+          symbol,
+          interval,
+          limit: String(limit),
+        }, false);
 
-    return raw.map((c) => ({
-      openTime: c[0],
-      open: parseFloat(c[1]),
-      high: parseFloat(c[2]),
-      low: parseFloat(c[3]),
-      close: parseFloat(c[4]),
-      volume: parseFloat(c[5]),
-      closeTime: c[6],
-      quoteVolume: parseFloat(c[7]),
-      trades: c[8],
-    }));
+        return {
+          value: raw.map((c) => ({
+            openTime: c[0],
+            open: parseFloat(c[1]!),
+            high: parseFloat(c[2]!),
+            low: parseFloat(c[3]!),
+            close: parseFloat(c[4]!),
+            volume: parseFloat(c[5]!),
+            closeTime: c[6]!,
+            quoteVolume: parseFloat(c[7]!),
+            trades: c[8]!,
+          })),
+        };
+      },
+    });
   }
 
   /**
    * Get 24h ticker stats for a symbol or all symbols.
+   *
+   * Binance returns a single ticker OBJECT for a symbol-scoped request and an
+   * ARRAY for an all-symbols request. Normalize both into a deterministic
+   * array so callers never call .map() on an object (E.2-FIX-A).
    */
   async get24hTicker(symbol?: string): Promise<Array<{
     symbol: string;
@@ -617,7 +760,7 @@ export class BinanceTestnetClient {
     const params: Record<string, string> = {};
     if (symbol) params["symbol"] = symbol;
 
-    const raw = await this.request<Array<{
+    type RawTicker = {
       symbol: string;
       lastPrice: string;
       priceChange: string;
@@ -627,19 +770,65 @@ export class BinanceTestnetClient {
       volume: string;
       quoteVolume: string;
       trades: number;
-    }>>("GET", "/fapi/v1/ticker/24hr", params, false);
+    };
 
-    return raw.map((t) => ({
-      symbol: t.symbol,
-      lastPrice: parseFloat(t.lastPrice),
-      priceChange: parseFloat(t.priceChange),
-      priceChangePercent: parseFloat(t.priceChangePercent),
-      highPrice: parseFloat(t.highPrice),
-      lowPrice: parseFloat(t.lowPrice),
-      volume: parseFloat(t.volume),
-      quoteVolume: parseFloat(t.quoteVolume),
-      trades: t.trades,
-    }));
+    // E.2-FIX-D.6: cached (15s TTL) + in-flight dedup + circuit breaker.
+    return executeWithRestPolicy<Array<{
+      symbol: string;
+      lastPrice: number;
+      priceChange: number;
+      priceChangePercent: number;
+      highPrice: number;
+      lowPrice: number;
+      volume: number;
+      quoteVolume: number;
+      trades: number;
+    }>>({
+      key: `ticker24h:${symbol ?? "ALL"}`,
+      ttlMs: CACHE_TTL_TICKER_MS,
+      execute: async () => {
+        const raw = await this.request<RawTicker | RawTicker[]>(
+          "GET",
+          "/fapi/v1/ticker/24hr",
+          params,
+          false,
+        );
+
+        // Normalize: single object → one-element array; array → as-is.
+        const list: RawTicker[] = Array.isArray(raw) ? raw : raw != null ? [raw] : [];
+
+        if (
+          list.length === 0 ||
+          !list.every(
+            (t) =>
+              t != null &&
+              typeof t === "object" &&
+              typeof t.symbol === "string" &&
+              t.symbol.length > 0,
+          )
+        ) {
+          throw new BinanceTestnetError(
+            "API_ERROR",
+            `Unexpected 24h ticker response shape${symbol ? ` for ${symbol}` : ""}`,
+            0,
+          );
+        }
+
+        return {
+          value: list.map((t) => ({
+            symbol: t.symbol,
+            lastPrice: parseFloat(t.lastPrice),
+            priceChange: parseFloat(t.priceChange),
+            priceChangePercent: parseFloat(t.priceChangePercent),
+            highPrice: parseFloat(t.highPrice),
+            lowPrice: parseFloat(t.lowPrice),
+            volume: parseFloat(t.volume),
+            quoteVolume: parseFloat(t.quoteVolume),
+            trades: t.trades,
+          })),
+        };
+      },
+    });
   }
 
   // ─── Income (PnL) ───────────────────────────────────────────────
@@ -739,6 +928,25 @@ export class BinanceTestnetClient {
 }
 
 // ─── Error Type ─────────────────────────────────────────────────────
+
+/**
+ * E.2-FIX-D.9: safe, non-credential error summary for logs/diagnostics.
+ * Preserves the category, Binance numeric code (Code -XXXX) and HTTP status
+ * when available. Never includes API key/secret/signature or raw messages.
+ */
+export function safeBinanceErrorSummary(err: unknown): string {
+  if (err instanceof BinanceTestnetError) {
+    const codeMatch = err.message.match(/Code (-?\d+)/);
+    const code = codeMatch ? ` ${codeMatch[0]}` : "";
+    const status = err.httpStatus ? ` HTTP ${err.httpStatus}` : "";
+    return `[${err.code}]${code}${status}`;
+  }
+  if (err instanceof Error) {
+    const m = err.message.match(/^\[([A-Z_]+)\]/);
+    return m?.[1] ?? err.name;
+  }
+  return "UNKNOWN_ERROR";
+}
 
 export class BinanceTestnetError extends Error {
   code: string;

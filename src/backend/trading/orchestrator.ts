@@ -139,6 +139,10 @@ export class TradingOrchestrator {
   private recentActivity: string[] = [];
   private executionMode: ExecutionMode;
   private reconciliationInterval: ReturnType<typeof setInterval> | null = null;
+  // E.2-FIX-D.12: bounded recovery for stale startup connection errors.
+  private lastRecoveryAttemptAt = 0;
+  private recoveryInFlight: Promise<boolean> | null = null;
+  private static readonly RECOVERY_COOLDOWN_MS = 5 * 60_000;
 
   constructor(executionMode: ExecutionMode = "PAPER", tradingEnabled = false) {
     this.executionMode = executionMode;
@@ -2018,6 +2022,68 @@ export class TradingOrchestrator {
    * - AI Allocation = how much the AI is allowed to use ($10 max)
    */
   /**
+   * E.2-FIX-D.12: bounded recovery from a stale startup connection failure.
+   *
+   * initializeTestnet() runs once at startup; if its ping fails, connectionError
+   * is set and testnetReady=false — and every success path that could clear the
+   * error requires testnetReady=true, so the stale error could never recover.
+   *
+   * Re-validates against REAL exchange evidence (authenticated config validation
+   * + balance sync — not just WS market data) at most once per cooldown, never
+   * concurrently, fail-closed on failure. Called from getConnectionState(), so
+   * recovery piggybacks on existing dashboard/diagnostic polling with no extra
+   * timers or REST bursts. Fire-and-forget: the current read still returns the
+   * (possibly stale) state; a successful recovery is visible on the next read.
+   */
+  maybeAttemptTestnetRecovery(): void {
+    if (this.executionMode !== "TESTNET" || !this.testnetExecutor) return;
+    if (this.state.testnetReady) return;
+    const now = Date.now();
+    if (now - this.lastRecoveryAttemptAt < TradingOrchestrator.RECOVERY_COOLDOWN_MS) return;
+    if (this.recoveryInFlight) return;
+
+    this.lastRecoveryAttemptAt = now;
+    logger.info("orchestrator", "Testnet recovery attempt (stale connection error detected)");
+    this.recoveryInFlight = (async () => {
+      try {
+        const validation = await this.testnetExecutor!.validateTestnetConfig();
+        if (!validation.valid) {
+          logger.warn("orchestrator", `Testnet recovery failed: ${validation.errors.join(", ")}`);
+          this.state.lastSyncAttempt = Date.now();
+          this.state.connectionError = validation.errors.join("; ");
+          this.state.consecutiveSyncFailures++;
+          return false; // fail-closed — keep error state
+        }
+        const balance = await this.testnetExecutor!.syncBalance();
+        this.riskEngine.setWalletBalance(balance);
+        this.riskEngine.setEffectiveAllocationLimit(balance);
+
+        this.state.testnetReady = true;
+        this.state.lastSuccessfulSync = Date.now();
+        this.state.lastSyncAttempt = Date.now();
+        this.state.connectionError = null;
+        this.state.consecutiveSyncFailures = 0;
+        // startReconciliationLoop is idempotent — no duplicate timer possible.
+        this.startReconciliationLoop();
+        logger.info(
+          "orchestrator",
+          `Testnet recovery succeeded: balance=$${balance.toFixed(2)}, connectionError cleared`,
+        );
+        return true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn("orchestrator", `Testnet recovery failed: ${msg}`);
+        this.state.lastSyncAttempt = Date.now();
+        this.state.connectionError = msg;
+        this.state.consecutiveSyncFailures++;
+        return false; // fail-closed
+      } finally {
+        this.recoveryInFlight = null;
+      }
+    })();
+  }
+
+  /**
    * P7C: Get the authoritative connection-state model.
    * Returned to both the dashboard API and getBinanceAccountData.
    */
@@ -2033,6 +2099,8 @@ export class TradingOrchestrator {
     const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes — if no sync in 5 min, data is stale
     const lastSync = this.state.lastSuccessfulSync;
     const isStale = lastSync === null || (Date.now() - lastSync) > STALE_THRESHOLD_MS;
+    // E.2-FIX-D.12: piggyback bounded recovery on dashboard/diagnostic reads.
+    this.maybeAttemptTestnetRecovery();
     return {
       configured: this.executionMode === "TESTNET" && this.testnetExecutor !== null,
       testnetReady: this.state.testnetReady,
